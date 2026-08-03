@@ -1,0 +1,84 @@
+# TripMate — Live Location + Trips (Demo)
+
+## วิธีรันโปรเจกต์
+
+1. ติดตั้ง dependencies:
+   ```
+   npm install
+   ```
+2. ตั้งค่าฐานข้อมูล PostgreSQL — ดูหัวข้อ [ฐานข้อมูล (PostgreSQL)](#ฐานข้อมูล-postgresql) ด้านล่าง (**บังคับ** ในเวอร์ชันนี้ เพราะระบบทริป/สมาชิกต้องใช้ฐานข้อมูล)
+3. รันเซิร์ฟเวอร์:
+   ```
+   node server.js
+   ```
+4. เปิดเบราว์เซอร์ไปที่ `http://localhost:3000`
+   - คนแรกกด "สร้างทริปใหม่" จะได้ **รหัสทริป 6 ตัวอักษร** ไว้แชร์ให้เพื่อน
+   - คนอื่นกด "เข้าร่วมด้วยรหัส" แล้วใส่รหัสเดียวกัน
+   - อนุญาตการเข้าถึงตำแหน่ง (Location) เมื่อเบราว์เซอร์ถาม
+
+## ฐานข้อมูล (PostgreSQL)
+
+### ขั้นตอนการตั้งค่า
+
+1. ติดตั้ง PostgreSQL แล้วสร้างฐานข้อมูล:
+   ```bash
+   createdb tripmate
+   ```
+2. คัดลอกไฟล์ตัวอย่าง env แล้วแก้ค่าให้ตรงกับเครื่องคุณ:
+   ```bash
+   cp .env.example .env
+   ```
+   แก้ค่า `DATABASE_URL` ในไฟล์ `.env` เช่น:
+   ```
+   DATABASE_URL=postgres://username:password@localhost:5432/tripmate
+   ```
+3. รันเซิร์ฟเวอร์ตามปกติ (`node server.js`) — ระบบจะสร้างตาราง (`trips`, `members`, `locations`, `itinerary_items`) ให้อัตโนมัติตอนเริ่มทำงาน โดยอ่านจาก `db/schema.sql`
+
+ถ้าใช้บริการ Postgres แบบ cloud (Render, Railway, Neon, Heroku ฯลฯ) ที่ต้องใช้ SSL ให้เพิ่ม `PGSSL=true` ใน `.env` ด้วย
+
+### โครงสร้างฐานข้อมูล
+- **`trips`** — หนึ่งทริป มีรหัสทริป (id), ชื่อทริป, `ended_at` (ถ้าไม่ใช่ NULL = ทริปจบแล้ว → ปิด GPS ทุกคนถาวร)
+- **`members`** — สมาชิกของแต่ละทริป ผูกกับ `trip_id` + `device_id` (คนคนเดียวกันเข้าได้หลายทริป เพราะ `device_id` เดิมแต่ `trip_id` ต่างกันจะได้แถวคนละแถว) มีคอลัมน์ `gps_enabled` เก็บว่าผู้ใช้เปิด/ปิดแชร์ตำแหน่งอยู่ไหม
+- **`locations`** — ประวัติพิกัดทุกจุดที่แต่ละคนเคยส่งเข้ามา
+- **`itinerary_items`** — กำหนดการเดินทางของแต่ละทริป
+
+### REST API
+| Method | Endpoint | คำอธิบาย |
+|---|---|---|
+| POST | `/api/trips` | สร้างทริปใหม่ → ได้รหัสทริปกลับมา |
+| GET | `/api/trips/:id` | ดูข้อมูลทริป (เช็คว่ามีจริง/จบหรือยัง) |
+| POST | `/api/trips/:id/end` | จบทริป → ปิด GPS ทุกคนถาวร |
+| GET | `/api/trips/:tripId/itinerary` | ดึงกำหนดการของทริป |
+| POST | `/api/trips/:tripId/itinerary` | เพิ่มกำหนดการ |
+| PUT | `/api/itinerary/:id` | แก้ไขกำหนดการ |
+| DELETE | `/api/itinerary/:id` | ลบกำหนดการ |
+| GET | `/api/trips/:tripId/members` | ดึงรายชื่อสมาชิกของทริป (จากฐานข้อมูล) |
+| GET | `/api/members/:id/history` | ดึงประวัติตำแหน่งของสมาชิกคนหนึ่ง (id = `<trip_id>:<device_id>`) |
+
+### พฤติกรรม GPS ที่ implement ไว้
+- ผู้ใช้มีสวิตช์เปิด/ปิดแชร์ตำแหน่งเองได้ตลอด (ปิดแล้วยังเห็น "ตำแหน่งล่าสุด" บนแผนที่/รายชื่อ)
+- เมื่อกด **"จบทริป"** → `trips.ended_at` ถูกตั้งค่า → `gps_enabled` ของสมาชิกทุกคนในทริปถูกบังคับเป็น `false` และสวิตช์จะถูกล็อก เปิดกลับไม่ได้อีก (ต้องสร้างทริปใหม่)
+- สถานะที่แสดงต่อสมาชิกแต่ละคน:
+  - **ONLINE** — เชื่อมต่ออยู่ + เปิด GPS + มีพิกัดใหม่เข้ามาไม่เกิน 20 วิ
+  - **NO SIGNAL (ขาดการเชื่อมต่อ)** — เชื่อมต่ออยู่ + เปิด GPS ไว้ แต่ไม่มีพิกัดใหม่เข้ามาเกิน 20 วิ (เช่น สัญญาณ GPS มือถือหลุด)
+  - **GPS OFF** — ยังออนไลน์อยู่ แต่ปิดสวิตช์แชร์ตำแหน่งเอง → โชว์ตำแหน่งล่าสุดที่เคยส่ง
+  - **OFFLINE** — หลุดการเชื่อมต่อ (ปิดแท็บ/เน็ตหลุด) → โชว์ตำแหน่งล่าสุดที่เคยส่ง
+
+## โครงสร้างไฟล์
+```
+tripmate/
+├── server.js          # Express + Socket.IO server + REST API
+├── package.json
+├── .env.example
+├── db/
+│   ├── index.js       # Postgres connection pool + query helpers
+│   └── schema.sql      # trips, members, locations, itinerary_items
+├── public/
+│   ├── index.html     # หน้าสร้าง/เข้าร่วมทริป + แผนที่ + กำหนดการ
+│   ├── style.css
+│   └── app.js          # แผนที่ (Leaflet), geolocation, socket, itinerary CRUD
+```
+
+## ต่อยอดฟีเจอร์ที่เหลือ
+- แท็บ **"ค่าใช้จ่าย"** และ **"สมาชิก" (จัดการสิทธิ์)** ยังไม่ได้ทำ — ต่อยอดเป็นตาราง `expenses` / `expense_splits` บน PostgreSQL ที่มีโครงอยู่แล้วได้เลย
+- Playback ประวัติเส้นทางย้อนหลัง (มีข้อมูลพร้อมใน `locations` + endpoint `/api/members/:id/history` แล้ว รอแค่ทำ UI)

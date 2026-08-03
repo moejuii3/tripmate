@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>TripMate — บันทึกพิกัดการเดินทาง</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ================= หน้าเริ่มต้น: สร้างทริป / เข้าร่วมทริป ================= -->
+<div id="gate" class="gate">
+  <div class="gate-card">
+    <div class="gate-stamp">📍</div>
+    <h1 class="gate-title">TripMate</h1>
+    <p class="gate-sub">สมุดบันทึกพิกัดการเดินทางแบบเรียลไทม์</p>
+
+    <div class="gate-tabs">
+      <button class="gate-tab active" data-tab="create">สร้างทริปใหม่</button>
+      <button class="gate-tab" data-tab="join">เข้าร่วมด้วยรหัส</button>
+    </div>
+
+    <form id="form-create" class="gate-form">
+      <label>ชื่อของคุณ
+        <input type="text" id="create-name" maxlength="24" placeholder="เช่น เอิร์ธ" required />
+      </label>
+      <label>ชื่อทริป
+        <input type="text" id="create-trip-name" maxlength="100" placeholder="เช่น เที่ยวเชียงใหม่ 2569" required />
+      </label>
+      <button type="submit" class="btn-primary">สร้างทริป &amp; เข้าร่วม</button>
+    </form>
+
+    <form id="form-join" class="gate-form hidden">
+      <label>ชื่อของคุณ
+        <input type="text" id="join-name" maxlength="24" placeholder="เช่น เอิร์ธ" required />
+      </label>
+      <label>รหัสทริป
+        <input type="text" id="join-code" maxlength="6" placeholder="เช่น A7K9QZ" required style="text-transform:uppercase" />
+      </label>
+      <button type="submit" class="btn-primary">เข้าร่วมทริป</button>
+    </form>
+
+    <p id="gate-error" class="gate-error hidden"></p>
+  </div>
+</div>
+
+<!-- ================= แอปหลัก ================= -->
+<div id="app" class="app hidden">
+
+  <header class="app-header">
+    <div class="header-left">
+      <span class="logo-mark">📍</span>
+      <div>
+        <div class="trip-name" id="trip-name">—</div>
+        <div class="trip-code">รหัสทริป: <span id="trip-code-value">——</span> <button id="copy-code" class="link-btn" title="คัดลอกรหัส">คัดลอก</button></div>
+      </div>
+    </div>
+    <div class="header-right">
+      <span id="conn-status" class="conn-badge conn-offline">กำลังเชื่อมต่อ…</span>
+      <button id="end-trip-btn" class="btn-danger-outline">จบทริป</button>
+    </div>
+  </header>
+
+  <div id="trip-ended-banner" class="ended-banner hidden">
+    🔒 ทริปนี้จบแล้ว — ปิดการแชร์ตำแหน่งของทุกคนถาวร (เปิดกลับไม่ได้)
+  </div>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="map">แผนที่</button>
+    <button class="tab-btn" data-tab="itinerary">กำหนดการ</button>
+  </nav>
+
+  <main class="main">
+
+    <!-- ---------- แท็บแผนที่ ---------- -->
+    <section id="tab-map" class="tab-panel active">
+      <div class="map-wrap">
+        <div id="map"></div>
+        <button id="locate-btn" class="locate-btn" title="ไปยังตำแหน่งของฉัน">🎯</button>
+
+        <div class="gps-control">
+          <label class="switch">
+            <input type="checkbox" id="gps-toggle" />
+            <span class="slider"></span>
+          </label>
+          <div class="gps-label">
+            <strong id="gps-label-text">แชร์ตำแหน่งของฉัน</strong>
+            <span id="gps-sub-text" class="gps-sub">ปิดอยู่</span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="sidebar">
+        <h2 class="sidebar-title">สมาชิกในทริป <span id="member-count">(0)</span></h2>
+        <ul id="member-list" class="member-list"></ul>
+      </aside>
+    </section>
+
+    <!-- ---------- แท็บกำหนดการ ---------- -->
+    <section id="tab-itinerary" class="tab-panel">
+      <div class="itinerary-wrap">
+        <form id="itinerary-form" class="itinerary-form">
+          <input type="text" id="it-title" placeholder="ชื่อกิจกรรม เช่น เที่ยววัดพระธาตุ" maxlength="200" required />
+          <input type="text" id="it-location" placeholder="สถานที่ (ถ้ามี)" maxlength="200" />
+          <div class="itinerary-form-row">
+            <label>เริ่ม <input type="datetime-local" id="it-start" /></label>
+            <label>สิ้นสุด <input type="datetime-local" id="it-end" /></label>
+          </div>
+          <textarea id="it-desc" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)" maxlength="2000" rows="2"></textarea>
+          <button type="submit" class="btn-primary">+ เพิ่มกำหนดการ</button>
+        </form>
+
+        <ul id="itinerary-list" class="itinerary-list"></ul>
+        <p id="itinerary-empty" class="empty-state">ยังไม่มีกำหนดการ — เพิ่มรายการแรกได้เลย</p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
