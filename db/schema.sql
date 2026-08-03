@@ -40,19 +40,9 @@ CREATE TABLE IF NOT EXISTS members (
 
 CREATE INDEX IF NOT EXISTS idx_members_trip ON members (trip_id);
 
--- ---------------------------------------------------------------
--- locations: ประวัติพิกัดทุกจุดที่แต่ละคนเคยส่งเข้ามา (ไว้ทำ playback ย้อนหลัง)
--- ---------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS locations (
-    id           BIGSERIAL PRIMARY KEY,
-    member_id    TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-    lat          DOUBLE PRECISION NOT NULL,
-    lng          DOUBLE PRECISION NOT NULL,
-    recorded_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_locations_member_time
-    ON locations (member_id, recorded_at DESC);
+-- หมายเหตุ: ตั้งใจไม่เก็บ "ประวัติ" พิกัดย้อนหลังเลย เก็บเฉพาะตำแหน่งปัจจุบัน
+-- (คอลัมน์ current_lat / current_lng / last_location_at ในตาราง members ด้านบน)
+-- เพื่อประหยัดพื้นที่ฐานข้อมูล — พิกัดเก่าจะถูกเขียนทับด้วยพิกัดใหม่ทุกครั้ง ไม่สะสม
 
 -- ---------------------------------------------------------------
 -- itinerary_items: กำหนดการเดินทางของแต่ละทริป

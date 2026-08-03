@@ -285,23 +285,6 @@ app.get("/api/trips/:tripId/members", requireDb, async (req, res) => {
     }
 });
 
-app.get("/api/members/:id/history", requireDb, async (req, res) => {
-    try {
-        const { rows } = await db.query(
-            `SELECT lat, lng, recorded_at
-             FROM locations
-             WHERE member_id = $1
-             ORDER BY recorded_at ASC
-             LIMIT 5000`,
-            [req.params.id]
-        );
-        res.json(rows);
-    } catch (err) {
-        console.error("[api] GET history failed:", err.message);
-        res.status(500).json({ error: "Failed to load location history" });
-    }
-});
-
 /* =====================================================
    SOCKET.IO — realtime: join, toggle gps, send-location
 ===================================================== */
@@ -443,15 +426,12 @@ io.on("connection", (socket) => {
         if (db.isEnabled()) {
             try {
                 const rowId = memberRowId(tripId, deviceId);
+                // เขียนทับตำแหน่งเดิมด้วยตำแหน่งล่าสุดเสมอ — ไม่เก็บประวัติ จึงไม่มีข้อมูลสะสม
                 await db.query(
                     `UPDATE members
                      SET current_lat = $1, current_lng = $2, last_location_at = now(), last_seen = now()
                      WHERE id = $3`,
                     [lat, lng, rowId]
-                );
-                await db.query(
-                    `INSERT INTO locations (member_id, lat, lng) VALUES ($1, $2, $3)`,
-                    [rowId, lat, lng]
                 );
             } catch (err) {
                 console.error("[db] Failed to save location:", err.message);
