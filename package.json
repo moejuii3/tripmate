@@ -11,9 +11,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "dotenv": "^16.4.7",
+    "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
-    "pg": "^8.13.1",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "uuid": "^14.0.1"
   }
 }

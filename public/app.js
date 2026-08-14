@@ -1,444 +1,475 @@
-/* ==========================================================
-   TripMate — client
-   ========================================================== */
+const socket = io();
 
-// ---------- device id: ระบุ "อุปกรณ์นี้" ให้คงที่ ไม่ว่าจะรีเฟรชกี่ครั้ง ----------
-function getDeviceId() {
-  let id = localStorage.getItem("tripmate_device_id");
-  if (!id) {
-    id = (crypto.randomUUID ? crypto.randomUUID() : `dev-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    localStorage.setItem("tripmate_device_id", id);
-  }
-  return id;
+/* ---------------------------------------------------
+   0) Persistent identity (เก็บใน localStorage)
+   ทำให้ "คนเดิม" กลับมาเปิดแอปแล้วเห็นทริปเดิม และเข้าได้หลายทริป
+--------------------------------------------------- */
+function uuid() {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === "x" ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
 }
-const DEVICE_ID = getDeviceId();
 
-// ---------- state ----------
-let socket = null;
-let map = null;
-let markers = {};       // deviceId -> L.marker
-let membersById = {};   // deviceId -> member object (ล่าสุดจาก server)
-let currentTrip = null; // { id, name, ended_at }
-let myName = "";
+let myId = localStorage.getItem("tripmate:userId");
+if (!myId) {
+    myId = uuid();
+    localStorage.setItem("tripmate:userId", myId);
+}
+let myName = localStorage.getItem("tripmate:userName") || null;
+
+let myTrips = [];
+let currentTrip = null; // { id, name, code, is_active, share_enabled, ... }
+let map;
+let myMarker;
+const markers = {}; // user_id -> { marker, data }
 let watchId = null;
-let tripEnded = false;
+let firstFix = true;
 
-const $ = (sel) => document.querySelector(sel);
+/* ---------------------------------------------------
+   1) Join flow (ตั้งชื่อ) -> Trip picker -> App
+--------------------------------------------------- */
+const joinOverlay = document.getElementById("join-overlay");
+const joinForm = document.getElementById("join-form");
+const nameInput = document.getElementById("name-input");
+const tripsOverlay = document.getElementById("trips-overlay");
+const appEl = document.getElementById("app");
 
-/* ============ Gate: สร้าง / เข้าร่วมทริป ============ */
-const gateTabs = document.querySelectorAll(".gate-tab");
-gateTabs.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    gateTabs.forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    const tab = btn.dataset.tab;
-    $("#form-create").classList.toggle("hidden", tab !== "create");
-    $("#form-join").classList.toggle("hidden", tab !== "join");
-    $("#gate-error").classList.add("hidden");
-  });
+joinForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) return;
+    myName = name;
+    localStorage.setItem("tripmate:userName", myName);
+    joinOverlay.style.display = "none";
+    await openTripPicker();
 });
 
-function showGateError(msg) {
-  const el = $("#gate-error");
-  el.textContent = msg;
-  el.classList.remove("hidden");
-}
-
-$("#form-create").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = $("#create-name").value.trim();
-  const tripName = $("#create-trip-name").value.trim();
-  if (!name || !tripName) return;
-
-  try {
-    const res = await fetch("/api/trips", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: tripName }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || "สร้างทริปไม่สำเร็จ");
+async function boot() {
+    if (myName) {
+        joinOverlay.style.display = "none";
+        await openTripPicker();
     }
-    const trip = await res.json();
-    startSession(trip.id, name);
-  } catch (err) {
-    showGateError(err.message || "เกิดข้อผิดพลาด — ตรวจสอบว่าตั้งค่าฐานข้อมูล (DATABASE_URL) แล้วหรือยัง");
-  }
-});
+}
+boot();
 
-$("#form-join").addEventListener("submit", (e) => {
-  e.preventDefault();
-  const name = $("#join-name").value.trim();
-  const code = $("#join-code").value.trim().toUpperCase();
-  if (!name || !code) return;
-  startSession(code, name);
-});
+/* ---------------------------------------------------
+   2) Trip picker — สร้าง/เข้าร่วม/เลือกทริป (รองรับหลายทริป)
+--------------------------------------------------- */
+const tripListEl = document.getElementById("trip-list");
+const createTripForm = document.getElementById("create-trip-form");
+const createTripNameInput = document.getElementById("create-trip-name");
+const joinTripForm = document.getElementById("join-trip-form");
+const joinTripCodeInput = document.getElementById("join-trip-code");
+const tripsErrorEl = document.getElementById("trips-error");
+const backToTripsBtn = document.getElementById("back-to-trips");
 
-function startSession(tripId, name) {
-  myName = name;
-  sessionStorage.setItem("tripmate_trip_id", tripId);
-  sessionStorage.setItem("tripmate_name", name);
-  connectSocket(tripId, name);
+async function api(path, options) {
+    const res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "เกิดข้อผิดพลาด");
+    return data;
 }
 
-/* ============ Socket connection ============ */
-function connectSocket(tripId, name) {
-  if (socket) socket.disconnect();
-
-  socket = io();
-
-  socket.on("connect", () => {
-    setConnBadge(true);
-    socket.emit("join-trip", { tripId, deviceId: DEVICE_ID, name });
-  });
-
-  socket.on("disconnect", () => setConnBadge(false));
-
-  socket.on("join-error", (payload) => {
-    const reasons = {
-      not_found: "ไม่พบรหัสทริปนี้ — ตรวจสอบรหัสอีกครั้ง",
-      missing_fields: "ข้อมูลไม่ครบ ลองใหม่อีกครั้ง",
-      server_error: "เซิร์ฟเวอร์ขัดข้อง ลองใหม่อีกครั้ง",
-    };
-    showGateError(reasons[payload?.reason] || "เข้าร่วมทริปไม่สำเร็จ");
-  });
-
-  socket.on("joined", (data) => {
-    currentTrip = data.trip;
-    tripEnded = !!data.trip.ended_at;
-    enterApp();
-    renderTripHeader();
-    updateMembers(data.members);
-    renderItinerary(data.itinerary);
-    if (!tripEnded && data.me.gpsEnabled) startGeoWatch();
-    syncGpsUiFromMe(data.me);
-  });
-
-  socket.on("members-update", (list) => {
-    updateMembers(list);
-    const me = list.find((m) => m.deviceId === DEVICE_ID);
-    if (me) syncGpsUiFromMe(me);
-  });
-
-  socket.on("trip-ended", (trip) => {
-    currentTrip = trip;
-    tripEnded = true;
-    stopGeoWatch();
-    $("#trip-ended-banner").classList.remove("hidden");
-    $("#end-trip-btn").disabled = true;
-    $("#end-trip-btn").textContent = "ทริปจบแล้ว";
-    $("#gps-toggle").checked = false;
-    $("#gps-toggle").disabled = true;
-    $("#gps-sub-text").textContent = "ปิดถาวร — ทริปจบแล้ว";
-  });
-
-  socket.on("gps-locked", () => {
-    $("#gps-toggle").checked = false;
-    $("#gps-sub-text").textContent = "ปิดถาวร — ทริปจบแล้ว";
-  });
-
-  socket.on("itinerary-created", (item) => addItineraryItem(item));
-  socket.on("itinerary-updated", () => fetchItinerary());
-  socket.on("itinerary-deleted", ({ id }) => {
-    const el = document.querySelector(`[data-item-id="${id}"]`);
-    if (el) el.remove();
-    checkItineraryEmpty();
-  });
+async function refreshMyTrips() {
+    const data = await api("/api/whoami", {
+        method: "POST",
+        body: JSON.stringify({ userId: myId, name: myName }),
+    });
+    myTrips = data.trips;
+    return myTrips;
 }
 
-function setConnBadge(online) {
-  const el = $("#conn-status");
-  el.textContent = online ? "เชื่อมต่อแล้ว" : "ขาดการเชื่อมต่อ";
-  el.classList.toggle("conn-online", online);
-  el.classList.toggle("conn-offline", !online);
+async function openTripPicker() {
+    appEl.hidden = true;
+    stopWatchingPosition();
+    if (currentTrip) {
+        socket.emit("leave-trip");
+        currentTrip = null;
+    }
+    tripsOverlay.hidden = false;
+    tripsErrorEl.hidden = true;
+    await refreshMyTrips();
+    renderTripList();
 }
 
-function enterApp() {
-  $("#gate").classList.add("hidden");
-  $("#app").classList.remove("hidden");
-  if (!map) initMap();
-}
+function renderTripList() {
+    if (myTrips.length === 0) {
+        tripListEl.innerHTML = `<p class="trip-list-empty">ยังไม่มีทริป — สร้างหรือเข้าร่วมทริปด้านล่างได้เลย</p>`;
+        return;
+    }
+    tripListEl.innerHTML = myTrips
+        .map((t) => {
+            const statusLabel = t.is_active ? "เปิดอยู่" : "ปิดแล้ว";
+            const statusClass = t.is_active ? "trip-badge-active" : "trip-badge-closed";
+            const shareLabel = t.share_enabled ? "แชร์ตำแหน่งอยู่" : "ปิดแชร์ตำแหน่ง";
+            return `
+                <button class="trip-item" data-trip-id="${t.id}">
+                    <span class="trip-item-color" style="background:${t.color}"></span>
+                    <span class="trip-item-body">
+                        <span class="trip-item-name">${escapeHtml(t.name)}</span>
+                        <span class="trip-item-meta">รหัส ${t.code} · ${t.member_count} คน · ${shareLabel}</span>
+                    </span>
+                    <span class="trip-badge ${statusClass}">${statusLabel}</span>
+                </button>
+            `;
+        })
+        .join("");
 
-function renderTripHeader() {
-  $("#trip-name").textContent = currentTrip.name;
-  $("#trip-code-value").textContent = currentTrip.id;
-  if (currentTrip.ended_at) {
-    tripEnded = true;
-    $("#trip-ended-banner").classList.remove("hidden");
-    $("#end-trip-btn").disabled = true;
-    $("#end-trip-btn").textContent = "ทริปจบแล้ว";
-  }
-}
-
-$("#copy-code").addEventListener("click", () => {
-  if (!currentTrip) return;
-  navigator.clipboard?.writeText(currentTrip.id);
-  const btn = $("#copy-code");
-  const old = btn.textContent;
-  btn.textContent = "คัดลอกแล้ว!";
-  setTimeout(() => (btn.textContent = old), 1500);
-});
-
-$("#end-trip-btn").addEventListener("click", async () => {
-  if (!currentTrip) return;
-  const ok = confirm(
-    "จบทริปนี้ใช่ไหม?\nการกระทำนี้จะปิดการแชร์ตำแหน่งของสมาชิกทุกคนถาวร และเปิดกลับไม่ได้"
-  );
-  if (!ok) return;
-  await fetch(`/api/trips/${currentTrip.id}/end`, { method: "POST" });
-});
-
-/* ============ Tabs ============ */
-document.querySelectorAll(".tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    $(`#tab-${btn.dataset.tab}`).classList.add("active");
-    if (btn.dataset.tab === "map" && map) setTimeout(() => map.invalidateSize(), 50);
-  });
-});
-
-/* ============ Map ============ */
-function initMap() {
-  map = L.map("map", { zoomControl: true }).setView([13.7563, 100.5018], 12);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap contributors",
-    maxZoom: 19,
-  }).addTo(map);
-}
-
-function colorIcon(color, faded) {
-  return L.divIcon({
-    className: "",
-    html: `<div style="
-      width:16px;height:16px;border-radius:50%;
-      background:${color};border:2.5px solid white;
-      box-shadow:0 0 0 1px rgba(0,0,0,.25);
-      opacity:${faded ? 0.4 : 1};"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-  });
-}
-
-function upsertMarker(m) {
-  if (m.lat == null || m.lng == null) return;
-  const faded = !m.online || !m.gpsEnabled || m.gpsStale;
-  if (markers[m.deviceId]) {
-    markers[m.deviceId].setLatLng([m.lat, m.lng]);
-    markers[m.deviceId].setIcon(colorIcon(m.color, faded));
-  } else {
-    markers[m.deviceId] = L.marker([m.lat, m.lng], { icon: colorIcon(m.color, faded) }).addTo(map);
-  }
-  markers[m.deviceId].bindPopup(`<strong>${escapeHtml(m.name)}</strong><br>${statusLabel(m)}`);
-}
-
-$("#locate-btn").addEventListener("click", () => {
-  const me = membersById[DEVICE_ID];
-  if (me && me.lat != null && map) {
-    map.setView([me.lat, me.lng], 15);
-  }
-});
-
-/* ============ Members ============ */
-function statusLabel(m) {
-  if (!m.online) return "ออฟไลน์ — แสดงตำแหน่งล่าสุด";
-  if (!m.gpsEnabled) return "ปิด GPS — แสดงตำแหน่งล่าสุด";
-  if (m.gpsStale) return "ขาดการเชื่อมต่อสัญญาณ GPS";
-  return "ออนไลน์";
-}
-
-function statusStampClass(m) {
-  if (!m.online) return "stamp-offline";
-  if (!m.gpsEnabled) return "stamp-off";
-  if (m.gpsStale) return "stamp-stale";
-  return "stamp-online";
-}
-
-function statusStampText(m) {
-  if (!m.online) return "OFFLINE";
-  if (!m.gpsEnabled) return "GPS OFF";
-  if (m.gpsStale) return "NO SIGNAL";
-  return "ON AIR";
-}
-
-function timeAgo(ts) {
-  if (!ts) return "ไม่มีข้อมูล";
-  const sec = Math.floor((Date.now() - ts) / 1000);
-  if (sec < 5) return "เมื่อสักครู่";
-  if (sec < 60) return `${sec} วินาทีที่แล้ว`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} นาทีที่แล้ว`;
-  const hr = Math.floor(min / 60);
-  return `${hr} ชม.ที่แล้ว`;
-}
-
-function updateMembers(list) {
-  membersById = {};
-  list.forEach((m) => (membersById[m.deviceId] = m));
-
-  $("#member-count").textContent = `(${list.length})`;
-
-  const ul = $("#member-list");
-  ul.innerHTML = "";
-  list
-    .slice()
-    .sort((a, b) => (a.deviceId === DEVICE_ID ? -1 : b.deviceId === DEVICE_ID ? 1 : a.name.localeCompare(b.name)))
-    .forEach((m) => {
-      const li = document.createElement("li");
-      li.className = "member-row";
-      li.innerHTML = `
-        <span class="member-dot" style="background:${m.color}"></span>
-        <div class="member-info">
-          <div class="member-name">${escapeHtml(m.name)}${m.deviceId === DEVICE_ID ? " (คุณ)" : ""}</div>
-          <div class="member-meta">${timeAgo(m.lastLocationAt)}</div>
-        </div>
-        <span class="stamp ${statusStampClass(m)}">${statusStampText(m)}</span>
-      `;
-      ul.appendChild(li);
-      upsertMarker(m);
+    tripListEl.querySelectorAll(".trip-item").forEach((btn) => {
+        btn.addEventListener("click", () => {
+            const trip = myTrips.find((t) => t.id === btn.dataset.tripId);
+            if (trip) enterTrip(trip);
+        });
     });
 }
 
-/* ============ GPS toggle + geolocation ============ */
-const gpsToggle = $("#gps-toggle");
-
-gpsToggle.addEventListener("change", () => {
-  if (tripEnded) {
-    gpsToggle.checked = false;
-    return;
-  }
-  const enabled = gpsToggle.checked;
-  socket.emit("toggle-gps", { enabled });
-  if (enabled) startGeoWatch();
-  else stopGeoWatch();
-  updateGpsSubText(enabled, null);
+createTripForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const tripName = createTripNameInput.value.trim();
+    if (!tripName) return;
+    try {
+        const { trip } = await api("/api/trips", {
+            method: "POST",
+            body: JSON.stringify({ userId: myId, name: myName, tripName }),
+        });
+        createTripNameInput.value = "";
+        await refreshMyTrips();
+        renderTripList();
+        const full = myTrips.find((t) => t.id === trip.id);
+        if (full) enterTrip(full);
+    } catch (err) {
+        showTripsError(err.message);
+    }
 });
 
-function syncGpsUiFromMe(me) {
-  if (tripEnded) {
-    gpsToggle.checked = false;
-    gpsToggle.disabled = true;
-    updateGpsSubText(false, "ปิดถาวร — ทริปจบแล้ว");
-    return;
-  }
-  gpsToggle.checked = !!me.gpsEnabled;
-  gpsToggle.disabled = false;
-  updateGpsSubText(me.gpsEnabled, me.gpsEnabled ? (me.gpsStale ? "ขาดการเชื่อมต่อสัญญาณ" : "กำลังแชร์ตำแหน่ง") : "ปิดอยู่");
-  if (me.gpsEnabled && watchId == null) startGeoWatch();
-  if (!me.gpsEnabled) stopGeoWatch();
-}
-
-function updateGpsSubText(enabled, text) {
-  $("#gps-sub-text").textContent = text || (enabled ? "กำลังแชร์ตำแหน่ง" : "ปิดอยู่");
-}
-
-function startGeoWatch() {
-  if (watchId != null) return;
-  if (!navigator.geolocation) {
-    updateGpsSubText(false, "เบราว์เซอร์นี้ไม่รองรับ GPS");
-    return;
-  }
-  watchId = navigator.geolocation.watchPosition(
-    (pos) => {
-      socket.emit("send-location", {
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-      });
-    },
-    (err) => {
-      console.warn("Geolocation error:", err.message);
-      updateGpsSubText(true, "ไม่สามารถอ่านตำแหน่งได้ (เช็คสิทธิ์การเข้าถึง)");
-    },
-    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-  );
-}
-
-function stopGeoWatch() {
-  if (watchId != null) {
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
-}
-
-/* ============ Itinerary ============ */
-$("#itinerary-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (!currentTrip) return;
-
-  const payload = {
-    title: $("#it-title").value.trim(),
-    locationName: $("#it-location").value.trim(),
-    description: $("#it-desc").value.trim(),
-    startTime: $("#it-start").value || null,
-    endTime: $("#it-end").value || null,
-    deviceId: DEVICE_ID,
-  };
-  if (!payload.title) return;
-
-  const res = await fetch(`/api/trips/${currentTrip.id}/itinerary`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (res.ok) {
-    e.target.reset();
-  }
+joinTripForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = joinTripCodeInput.value.trim().toUpperCase();
+    if (!code) return;
+    try {
+        const { trip } = await api("/api/trips/join", {
+            method: "POST",
+            body: JSON.stringify({ userId: myId, name: myName, code }),
+        });
+        joinTripCodeInput.value = "";
+        await refreshMyTrips();
+        renderTripList();
+        const full = myTrips.find((t) => t.id === trip.id);
+        if (full) enterTrip(full);
+    } catch (err) {
+        showTripsError(err.message);
+    }
 });
 
-function fmtDateTime(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
+function showTripsError(msg) {
+    tripsErrorEl.textContent = msg;
+    tripsErrorEl.hidden = false;
 }
 
-function addItineraryItem(item) {
-  $("#itinerary-empty").classList.add("hidden");
-  const li = document.createElement("li");
-  li.className = "itinerary-item";
-  li.dataset.itemId = item.id;
-  const timeStr = [fmtDateTime(item.start_time), fmtDateTime(item.end_time)].filter(Boolean).join(" – ");
-  li.innerHTML = `
-    <div>
-      <h3>${escapeHtml(item.title)}</h3>
-      ${item.location_name ? `<p>📍 ${escapeHtml(item.location_name)}</p>` : ""}
-      ${timeStr ? `<p class="it-time">🕒 ${timeStr}</p>` : ""}
-      ${item.description ? `<p>${escapeHtml(item.description)}</p>` : ""}
-    </div>
-    <button class="it-delete" data-id="${item.id}">ลบ</button>
-  `;
-  li.querySelector(".it-delete").addEventListener("click", async () => {
-    await fetch(`/api/itinerary/${item.id}`, { method: "DELETE" });
-  });
-  $("#itinerary-list").prepend(li);
+backToTripsBtn.addEventListener("click", () => {
+    openTripPicker();
+});
+
+/* ---------------------------------------------------
+   3) เปิดทริปที่เลือก -> โหลดแผนที่ + สมัครห้อง socket ของทริปนี้
+--------------------------------------------------- */
+async function enterTrip(trip) {
+    currentTrip = trip;
+    tripsOverlay.hidden = true;
+    appEl.hidden = false;
+
+    document.getElementById("current-trip-name").textContent = trip.name;
+    updateTripStatusUI(trip.is_active);
+    updateShareToggleUI(trip.share_enabled);
+    document.getElementById("trip-code-display").textContent = trip.code;
+
+    if (!map) initMap();
+    Object.values(markers).forEach((m) => map.removeLayer(m.marker));
+    for (const k in markers) delete markers[k];
+    if (myMarker) {
+        map.removeLayer(myMarker);
+        myMarker = null;
+    }
+    firstFix = true;
+
+    socket.emit("join-trip", { tripId: trip.id, userId: myId });
+
+    if (trip.is_active && trip.share_enabled) {
+        startWatchingPosition();
+    } else {
+        stopWatchingPosition();
+    }
 }
 
-function checkItineraryEmpty() {
-  const list = $("#itinerary-list");
-  $("#itinerary-empty").classList.toggle("hidden", list.children.length > 0);
+/* ---------------------------------------------------
+   4) Connection status
+--------------------------------------------------- */
+const connDot = document.getElementById("conn-dot");
+const connText = document.getElementById("conn-text");
+
+function setConnStatus(state) {
+    connDot.className = "dot dot-" + state;
+    connText.textContent =
+        state === "online" ? "เชื่อมต่อแล้ว" :
+        state === "offline" ? "ขาดการเชื่อมต่อ" :
+        "กำลังเชื่อมต่อ...";
 }
 
-function renderItinerary(items) {
-  $("#itinerary-list").innerHTML = "";
-  items.forEach(addItineraryItem);
-  checkItineraryEmpty();
+socket.on("connect", () => {
+    setConnStatus("online");
+    if (currentTrip) socket.emit("join-trip", { tripId: currentTrip.id, userId: myId });
+});
+socket.on("disconnect", () => setConnStatus("offline"));
+socket.on("connect_error", () => setConnStatus("offline"));
+
+/* ---------------------------------------------------
+   5) Tabs
+--------------------------------------------------- */
+document.querySelectorAll(".tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+        document.querySelectorAll(".panel").forEach((p) => p.classList.remove("panel-active"));
+
+        btn.classList.add("active");
+        document.getElementById("panel-" + btn.dataset.tab).classList.add("panel-active");
+
+        if (btn.dataset.tab === "location" && map) {
+            setTimeout(() => map.invalidateSize(), 50);
+        }
+    });
+});
+
+/* ---------------------------------------------------
+   6) Map setup
+--------------------------------------------------- */
+function initMap() {
+    map = L.map("map", { zoomControl: false }).setView([13.7563, 100.5018], 13);
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+        maxZoom: 19,
+    }).addTo(map);
+
+    document.getElementById("locate-btn").addEventListener("click", () => {
+        if (myMarker) map.flyTo(myMarker.getLatLng(), 16, { duration: 0.6 });
+    });
 }
 
-async function fetchItinerary() {
-  if (!currentTrip) return;
-  const res = await fetch(`/api/trips/${currentTrip.id}/itinerary`);
-  if (res.ok) renderItinerary(await res.json());
+/* ---------------------------------------------------
+   7) Geolocation -> emit to server (เฉพาะทริปที่เปิดอยู่ + เปิดแชร์)
+--------------------------------------------------- */
+function startWatchingPosition() {
+    if (watchId !== null) return; // กำลังติดตามอยู่แล้ว
+    if (!navigator.geolocation) {
+        connText.textContent = "เบราว์เซอร์ไม่รองรับ GPS";
+        return;
+    }
+
+    watchId = navigator.geolocation.watchPosition(
+        (position) => {
+            if (!currentTrip || !currentTrip.is_active || !currentTrip.share_enabled) return;
+
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+
+            socket.emit("send-location", { tripId: currentTrip.id, lat, lng });
+
+            if (!myMarker) {
+                myMarker = L.marker([lat, lng]).addTo(map);
+                myMarker.bindPopup(`📍 ${myName} (คุณ)`);
+            } else {
+                myMarker.setLatLng([lat, lng]);
+            }
+
+            if (firstFix) {
+                map.setView([lat, lng], 16);
+                firstFix = false;
+            }
+        },
+        (error) => console.warn("Geolocation error:", error.message),
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+    );
 }
 
-/* ============ utils ============ */
+function stopWatchingPosition() {
+    if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+    }
+    if (myMarker && map) {
+        map.removeLayer(myMarker);
+        myMarker = null;
+    }
+    firstFix = true;
+}
+
+/* ---------------------------------------------------
+   8) สวิตช์เปิด/ปิดแชร์ตำแหน่ง "รายทริป" — เก็บลง DB ผ่าน API
+--------------------------------------------------- */
+const shareToggleInput = document.getElementById("share-toggle-input");
+
+function updateShareToggleUI(enabled) {
+    shareToggleInput.checked = !!enabled;
+    shareToggleInput.disabled = !(currentTrip && currentTrip.is_active);
+}
+
+shareToggleInput.addEventListener("change", async () => {
+    if (!currentTrip) return;
+    const enabled = shareToggleInput.checked;
+    try {
+        await api(`/api/trips/${currentTrip.id}/share`, {
+            method: "PATCH",
+            body: JSON.stringify({ userId: myId, enabled }),
+        });
+        currentTrip.share_enabled = enabled;
+        if (enabled && currentTrip.is_active) {
+            firstFix = true;
+            startWatchingPosition();
+        } else {
+            stopWatchingPosition();
+        }
+    } catch (err) {
+        shareToggleInput.checked = !enabled; // revert on failure
+        alert(err.message);
+    }
+});
+
+/* ---------------------------------------------------
+   9) เปิด/ปิดทริป (สวิตช์ใหญ่ระดับทริป) — ทริปเก่าปิดแล้วจะไม่รับ GPS อีก
+--------------------------------------------------- */
+const toggleTripActiveBtn = document.getElementById("toggle-trip-active-btn");
+
+function updateTripStatusUI(isActive) {
+    document.getElementById("current-trip-badge").textContent = isActive ? "เปิดอยู่" : "ปิดแล้ว";
+    document.getElementById("current-trip-badge").className =
+        "trip-badge " + (isActive ? "trip-badge-active" : "trip-badge-closed");
+    document.getElementById("trip-status-display").textContent = isActive
+        ? "เปิดอยู่ — รับตำแหน่ง GPS ได้ตามปกติ"
+        : "ปิดแล้ว — ไม่รับตำแหน่ง GPS จากสมาชิก (เหมาะกับทริปเก่า)";
+    toggleTripActiveBtn.textContent = isActive ? "ปิดทริปนี้ (เก็บเป็นทริปเก่า)" : "เปิดทริปนี้อีกครั้ง";
+}
+
+toggleTripActiveBtn.addEventListener("click", async () => {
+    if (!currentTrip) return;
+    const nextActive = !currentTrip.is_active;
+    try {
+        const { trip } = await api(`/api/trips/${currentTrip.id}/active`, {
+            method: "PATCH",
+            body: JSON.stringify({ userId: myId, isActive: nextActive }),
+        });
+        currentTrip.is_active = !!trip.is_active;
+        updateTripStatusUI(currentTrip.is_active);
+        updateShareToggleUI(currentTrip.share_enabled);
+        if (currentTrip.is_active && currentTrip.share_enabled) {
+            firstFix = true;
+            startWatchingPosition();
+        } else {
+            stopWatchingPosition();
+        }
+    } catch (err) {
+        alert(err.message);
+    }
+});
+
+socket.on("trip-active-changed", ({ tripId, isActive }) => {
+    if (currentTrip && currentTrip.id === tripId) {
+        currentTrip.is_active = isActive;
+        updateTripStatusUI(isActive);
+        updateShareToggleUI(currentTrip.share_enabled);
+        if (!isActive) stopWatchingPosition();
+    }
+});
+
+/* ---------------------------------------------------
+   10) Receive all members' locations -> update markers + sidebar
+--------------------------------------------------- */
+const memberListEl = document.getElementById("member-list");
+const memberCountEl = document.getElementById("member-count");
+const membersPanelListEl = document.getElementById("members-panel-list");
+
+socket.on("users-location", ({ trip, members }) => {
+    if (!currentTrip || (trip && trip.id !== currentTrip.id)) return;
+
+    const activeMembers = members.filter((m) => m.lat != null && m.lng != null);
+    const seen = new Set();
+
+    for (const u of activeMembers) {
+        if (u.id === myId) continue; // ตัวเองใช้ myMarker แยก
+        seen.add(u.id);
+
+        if (!markers[u.id]) {
+            const icon = L.divIcon({
+                className: "",
+                html: `<div style="width:16px;height:16px;border-radius:50%;background:${u.color};border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4);"></div>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8],
+            });
+            const marker = L.marker([u.lat, u.lng], { icon }).addTo(map);
+            marker.bindPopup(`${u.name}`);
+            markers[u.id] = { marker, data: u };
+        } else {
+            markers[u.id].marker.setLatLng([u.lat, u.lng]);
+            markers[u.id].data = u;
+        }
+    }
+
+    for (const id in markers) {
+        if (!seen.has(id)) {
+            map.removeLayer(markers[id].marker);
+            delete markers[id];
+        }
+    }
+
+    renderMemberList(members);
+});
+
+/* ---------------------------------------------------
+   11) Sidebar rendering
+--------------------------------------------------- */
+function initials(name) {
+    return name.trim().slice(0, 2).toUpperCase();
+}
+
+function timeAgo(ts, shareEnabled) {
+    if (!shareEnabled) return "ปิดแชร์ตำแหน่ง";
+    if (!ts) return "กำลังหาตำแหน่ง...";
+    const seconds = Math.floor((Date.now() - ts) / 1000);
+    if (seconds < 5) return "อัปเดตล่าสุด";
+    if (seconds < 60) return `${seconds} วินาทีที่แล้ว`;
+    const mins = Math.floor(seconds / 60);
+    return `${mins} นาทีที่แล้ว`;
+}
+
+function memberCardHtml(u) {
+    const isMe = u.id === myId;
+    return `
+        <div class="member-card ${isMe ? "is-me" : ""}">
+            <div class="member-avatar" style="background:${u.color}">${initials(u.name)}</div>
+            <div class="member-info">
+                <div class="member-name">${escapeHtml(u.name)}${isMe ? " (คุณ)" : ""}</div>
+                <div class="member-meta">${timeAgo(u.last_update, !!u.share_enabled)}</div>
+            </div>
+            ${u.share_enabled ? "" : '<span class="share-off-pill">ปิด GPS</span>'}
+        </div>
+    `;
+}
+
+function renderMemberList(members) {
+    memberCountEl.textContent = members.length;
+    memberListEl.innerHTML = members.map(memberCardHtml).join("");
+    membersPanelListEl.innerHTML = members.map(memberCardHtml).join("");
+}
+
 function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str ?? "";
-  return div.innerHTML;
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
 }
 
-// รีเฟรชสถานะ "ขาดการเชื่อมต่อสัญญาณ" ทุก ๆ 5 วิ แม้ไม่มี event ใหม่เข้ามา
-setInterval(() => {
-  if (Object.keys(membersById).length) updateMembers(Object.values(membersById));
-}, 5000);
+// Refresh "time ago" labels periodically (sidebar re-renders on every users-location tick already)
+setInterval(() => {}, 5000);
