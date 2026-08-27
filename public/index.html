@@ -13,16 +13,36 @@
 </head>
 <body>
 
-    <!-- ===== Join Modal (ตั้งชื่อครั้งแรก) ===== -->
-    <div id="join-overlay" class="join-overlay">
-        <form id="join-form" class="join-card">
+    <!-- ===== Auth (สมัครสมาชิก / เข้าสู่ระบบ) ===== -->
+    <div id="auth-overlay" class="join-overlay">
+        <div class="join-card">
             <div class="join-logo">🧭</div>
             <h1>TripMate</h1>
             <p class="join-sub">ติดตามตำแหน่งเพื่อนร่วมทริปแบบเรียลไทม์</p>
-            <label for="name-input">ชื่อของคุณ</label>
-            <input id="name-input" type="text" maxlength="24" placeholder="เช่น เจน, ต้น, มายด์..." autocomplete="off" required />
-            <button type="submit">ถัดไป</button>
-        </form>
+
+            <div class="auth-tabs">
+                <button type="button" id="auth-tab-login" class="auth-tab active">เข้าสู่ระบบ</button>
+                <button type="button" id="auth-tab-register" class="auth-tab">สมัครสมาชิก</button>
+            </div>
+
+            <form id="login-form" class="auth-form">
+                <label for="login-username">ชื่อผู้ใช้</label>
+                <input id="login-username" type="text" maxlength="20" autocomplete="username" required />
+                <label for="login-password">รหัสผ่าน</label>
+                <input id="login-password" type="password" autocomplete="current-password" required />
+                <button type="submit">เข้าสู่ระบบ</button>
+            </form>
+
+            <form id="register-form" class="auth-form" hidden>
+                <label for="register-username">ตั้งชื่อผู้ใช้ (3-20 ตัวอักษร, a-z 0-9 _ .)</label>
+                <input id="register-username" type="text" maxlength="20" autocomplete="username" required />
+                <label for="register-password">ตั้งรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)</label>
+                <input id="register-password" type="password" autocomplete="new-password" required />
+                <button type="submit">สมัครสมาชิก</button>
+            </form>
+
+            <p id="auth-error" class="trips-error" hidden></p>
+        </div>
     </div>
 
     <!-- ===== Trip Picker (เลือก/สร้าง/เข้าร่วมทริป — รองรับหลายทริป) ===== -->
@@ -31,7 +51,10 @@
             <div class="trips-card-head">
                 <div class="join-logo">🧭</div>
                 <h1>ทริปของฉัน</h1>
-                <p class="join-sub">เลือกทริปที่จะเปิด หรือสร้าง/เข้าร่วมทริปใหม่</p>
+                <p class="join-sub">
+                    เข้าสู่ระบบในชื่อ <strong id="whoami-username">—</strong> ·
+                    <button type="button" id="logout-btn" class="link-btn">ออกจากระบบ</button>
+                </p>
             </div>
 
             <div id="trip-list" class="trip-list"></div>
@@ -129,6 +152,15 @@
                         </div>
                         <button id="toggle-trip-active-btn" class="btn-secondary btn-block">ปิดทริปนี้</button>
                         <p class="trip-info-hint">ทริปที่ปิดแล้วจะไม่รับตำแหน่ง GPS จากสมาชิกอีก เหมาะสำหรับทริปเก่าที่จบไปแล้ว</p>
+                    </div>
+
+                    <div class="trip-info-card">
+                        <h3>บัญชีของฉัน</h3>
+                        <div class="trip-info-row">
+                            <span>เข้าสู่ระบบในชื่อ</span>
+                            <strong id="account-username-display">—</strong>
+                        </div>
+                        <button id="logout-btn-2" class="btn-secondary btn-block">ออกจากระบบ</button>
                     </div>
 
                     <div class="trip-info-card">

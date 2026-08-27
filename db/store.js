@@ -28,7 +28,6 @@ function toEpoch(ts) {
     return ts ? new Date(ts).getTime() : null;
 }
 
-// แปลงแถว trip จาก DB -> รูปแบบ JSON ที่ฝั่งหน้าเว็บ (public/app.js) คาดหวัง
 function shapeTrip(row) {
     if (!row) return null;
     return {
@@ -43,7 +42,7 @@ function shapeTrip(row) {
 
 function shapeMember(row) {
     return {
-        id: row.device_id,
+        id: row.user_id,
         name: row.name,
         color: row.color,
         share_enabled: !!row.gps_enabled,
@@ -54,9 +53,45 @@ function shapeMember(row) {
 }
 
 // ---------------------------------------------------------------------
+// Users (บัญชีจริง — สมัคร/เข้าสู่ระบบ)
+// ---------------------------------------------------------------------
+async function createUser(username, passwordHash) {
+    assertEnabled();
+    const id = crypto.randomUUID();
+    try {
+        await query("INSERT INTO users (id, username, password_hash) VALUES ($1, $2, $3)", [
+            id,
+            username,
+            passwordHash,
+        ]);
+    } catch (err) {
+        if (err.code === "23505") {
+            // unique_violation บน username
+            const dup = new Error("มีชื่อผู้ใช้นี้อยู่แล้ว ลองชื่ออื่น");
+            dup.status = 409;
+            throw dup;
+        }
+        throw err;
+    }
+    return { id, username };
+}
+
+async function findUserByUsername(username) {
+    assertEnabled();
+    const { rows } = await query("SELECT * FROM users WHERE username = $1", [username]);
+    return rows[0] || null;
+}
+
+async function findUserById(userId) {
+    assertEnabled();
+    const { rows } = await query("SELECT id, username FROM users WHERE id = $1", [userId]);
+    return rows[0] || null;
+}
+
+// ---------------------------------------------------------------------
 // Trips
 // ---------------------------------------------------------------------
-async function createTrip(name, deviceId, memberName) {
+async function createTrip(name, userId, memberName) {
     assertEnabled();
 
     let id = genTripId();
@@ -67,7 +102,7 @@ async function createTrip(name, deviceId, memberName) {
     }
 
     await query("INSERT INTO trips (id, name) VALUES ($1, $2)", [id, name]);
-    await addMember(id, deviceId, memberName);
+    await addMember(id, userId, memberName);
     return getTrip(id);
 }
 
@@ -77,43 +112,43 @@ async function getTrip(tripId) {
     return shapeTrip(rows[0]);
 }
 
-async function isMember(tripId, deviceId) {
+async function isMember(tripId, userId) {
     assertEnabled();
     const { rows } = await query(
-        "SELECT 1 FROM members WHERE trip_id = $1 AND device_id = $2",
-        [tripId, deviceId]
+        "SELECT 1 FROM members WHERE trip_id = $1 AND user_id = $2",
+        [tripId, userId]
     );
     return rows.length > 0;
 }
 
-async function addMember(tripId, deviceId, memberName) {
+async function addMember(tripId, userId, memberName) {
     assertEnabled();
 
     const existing = await query(
-        "SELECT 1 FROM members WHERE trip_id = $1 AND device_id = $2",
-        [tripId, deviceId]
+        "SELECT 1 FROM members WHERE trip_id = $1 AND user_id = $2",
+        [tripId, userId]
     );
     if (existing.rows.length > 0) {
         await query(
-            "UPDATE members SET name = $3, last_seen = now() WHERE trip_id = $1 AND device_id = $2",
-            [tripId, deviceId, memberName || "Guest"]
+            "UPDATE members SET name = $3, last_seen = now() WHERE trip_id = $1 AND user_id = $2",
+            [tripId, userId, memberName || "Guest"]
         );
         return;
     }
 
     const countRes = await query("SELECT COUNT(*)::int AS n FROM members WHERE trip_id = $1", [tripId]);
     const color = COLORS[countRes.rows[0].n % COLORS.length];
-    const id = `${tripId}:${deviceId}`;
+    const id = `${tripId}:${userId}`;
 
     await query(
-        `INSERT INTO members (id, trip_id, device_id, name, color, gps_enabled)
+        `INSERT INTO members (id, trip_id, user_id, name, color, gps_enabled)
          VALUES ($1, $2, $3, $4, $5, true)`,
-        [id, tripId, deviceId, memberName || "Guest", color]
+        [id, tripId, userId, memberName || "Guest", color]
     );
 }
 
-// ทริปทั้งหมดที่ device นี้เข้าร่วม (รองรับหลายทริปพร้อมกัน)
-async function getDeviceTrips(deviceId) {
+// ทริปทั้งหมดที่บัญชีนี้เข้าร่วม (รองรับหลายทริปพร้อมกัน)
+async function getUserTrips(userId) {
     assertEnabled();
     const { rows } = await query(
         `SELECT t.id, t.name, t.created_at, t.ended_at,
@@ -121,9 +156,9 @@ async function getDeviceTrips(deviceId) {
                 (SELECT COUNT(*) FROM members WHERE trip_id = t.id) AS member_count
          FROM trips t
          JOIN members m ON m.trip_id = t.id
-         WHERE m.device_id = $1
+         WHERE m.user_id = $1
          ORDER BY (t.ended_at IS NULL) DESC, t.created_at DESC`,
-        [deviceId]
+        [userId]
     );
     return rows.map((r) => ({
         ...shapeTrip(r),
@@ -136,7 +171,7 @@ async function getDeviceTrips(deviceId) {
 async function getTripMembers(tripId) {
     assertEnabled();
     const { rows } = await query(
-        `SELECT device_id, name, color, gps_enabled, current_lat, current_lng, last_location_at
+        `SELECT user_id, name, color, gps_enabled, current_lat, current_lng, last_location_at
          FROM members WHERE trip_id = $1 ORDER BY joined_at ASC`,
         [tripId]
     );
@@ -154,38 +189,41 @@ async function setTripActive(tripId, isActive) {
 }
 
 // เปิด/ปิดการแชร์ตำแหน่งของ "ผู้ใช้คนนี้" เฉพาะในทริปนี้ (คนเดียวอยู่ได้หลายทริป เลือกแชร์เป็นรายทริป)
-async function setMemberShare(tripId, deviceId, enabled) {
+async function setMemberShare(tripId, userId, enabled) {
     assertEnabled();
     if (enabled) {
         await query(
-            "UPDATE members SET gps_enabled = true WHERE trip_id = $1 AND device_id = $2",
-            [tripId, deviceId]
+            "UPDATE members SET gps_enabled = true WHERE trip_id = $1 AND user_id = $2",
+            [tripId, userId]
         );
     } else {
         // เคลียร์พิกัดล่าสุดออกเมื่อปิดแชร์ ป้องกันหมุดค้างอยู่บนแผนที่คนอื่น
         await query(
             `UPDATE members SET gps_enabled = false, current_lat = NULL, current_lng = NULL
-             WHERE trip_id = $1 AND device_id = $2`,
-            [tripId, deviceId]
+             WHERE trip_id = $1 AND user_id = $2`,
+            [tripId, userId]
         );
     }
 }
 
-async function updateLocation(tripId, deviceId, lat, lng) {
+async function updateLocation(tripId, userId, lat, lng) {
     assertEnabled();
     await query(
         `UPDATE members SET current_lat = $3, current_lng = $4, last_location_at = now(), last_seen = now()
-         WHERE trip_id = $1 AND device_id = $2`,
-        [tripId, deviceId, lat, lng]
+         WHERE trip_id = $1 AND user_id = $2`,
+        [tripId, userId, lat, lng]
     );
 }
 
 module.exports = {
+    createUser,
+    findUserByUsername,
+    findUserById,
     createTrip,
     getTrip,
     isMember,
     addMember,
-    getDeviceTrips,
+    getUserTrips,
     getTripMembers,
     setTripActive,
     setMemberShare,

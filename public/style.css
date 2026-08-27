@@ -116,6 +116,52 @@ html, body {
 .join-card button:hover { background: var(--primary-dark); }
 .join-card button:active { transform: scale(0.98); }
 
+/* ============ Auth (login / register) ============ */
+.auth-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--surface-2);
+    padding: 4px;
+    border-radius: 10px;
+    margin-bottom: 14px;
+}
+
+.auth-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 9px 0;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.auth-tab.active {
+    background: var(--surface);
+    color: var(--primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+
+.auth-form { display: flex; flex-direction: column; gap: 4px; }
+.auth-form label { margin-top: 6px; }
+
+.link-btn {
+    border: none;
+    background: transparent;
+    color: var(--primary);
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+}
+.link-btn:hover { color: var(--primary-dark); }
+
 /* ============ Trip picker ============ */
 .trips-card {
     background: var(--surface);

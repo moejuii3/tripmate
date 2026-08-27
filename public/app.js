@@ -1,24 +1,10 @@
-const socket = io();
-
 /* ---------------------------------------------------
-   0) Persistent identity (เก็บใน localStorage)
-   ทำให้ "คนเดิม" กลับมาเปิดแอปแล้วเห็นทริปเดิม และเข้าได้หลายทริป
+   0) Auth state — token ที่ได้จากล็อกอิน/สมัครสมาชิก เก็บใน localStorage
 --------------------------------------------------- */
-function uuid() {
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-    });
-}
+let authToken = localStorage.getItem("tripmate:token") || null;
+let me = null; // { id, username }
 
-let myId = localStorage.getItem("tripmate:userId");
-if (!myId) {
-    myId = uuid();
-    localStorage.setItem("tripmate:userId", myId);
-}
-let myName = localStorage.getItem("tripmate:userName") || null;
-
+let socket = null;
 let myTrips = [];
 let currentTrip = null; // { id, name, code, is_active, share_enabled, ... }
 let map;
@@ -27,35 +13,187 @@ const markers = {}; // user_id -> { marker, data }
 let watchId = null;
 let firstFix = true;
 
+async function api(path, options = {}) {
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+    const res = await fetch(path, { ...options, headers });
+    const data = await res.json().catch(() => ({}));
+
+    if (res.status === 401) {
+        // token หมดอายุ/ไม่ถูกต้อง -> เด้งกลับไปหน้าล็อกอิน
+        doLogout();
+        throw new Error(data.error || "กรุณาเข้าสู่ระบบใหม่");
+    }
+    if (!res.ok) throw new Error(data.error || "เกิดข้อผิดพลาด");
+    return data;
+}
+
 /* ---------------------------------------------------
-   1) Join flow (ตั้งชื่อ) -> Trip picker -> App
+   1) Auth screen — สลับแท็บ login / register
 --------------------------------------------------- */
-const joinOverlay = document.getElementById("join-overlay");
-const joinForm = document.getElementById("join-form");
-const nameInput = document.getElementById("name-input");
+const authOverlay = document.getElementById("auth-overlay");
+const authTabLogin = document.getElementById("auth-tab-login");
+const authTabRegister = document.getElementById("auth-tab-register");
+const loginForm = document.getElementById("login-form");
+const registerForm = document.getElementById("register-form");
+const authErrorEl = document.getElementById("auth-error");
 const tripsOverlay = document.getElementById("trips-overlay");
 const appEl = document.getElementById("app");
 
-joinForm.addEventListener("submit", async (e) => {
+function showAuthTab(tab) {
+    authErrorEl.hidden = true;
+    const isLogin = tab === "login";
+    authTabLogin.classList.toggle("active", isLogin);
+    authTabRegister.classList.toggle("active", !isLogin);
+    loginForm.hidden = !isLogin;
+    registerForm.hidden = isLogin;
+}
+authTabLogin.addEventListener("click", () => showAuthTab("login"));
+authTabRegister.addEventListener("click", () => showAuthTab("register"));
+
+function showAuthError(msg) {
+    authErrorEl.textContent = msg;
+    authErrorEl.hidden = false;
+}
+
+loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const name = nameInput.value.trim();
-    if (!name) return;
-    myName = name;
-    localStorage.setItem("tripmate:userName", myName);
-    joinOverlay.style.display = "none";
-    await openTripPicker();
+    const username = document.getElementById("login-username").value.trim();
+    const password = document.getElementById("login-password").value;
+    try {
+        const data = await api("/api/auth/login", {
+            method: "POST",
+            body: JSON.stringify({ username, password }),
+        });
+        onAuthSuccess(data.token, data.user);
+    } catch (err) {
+        showAuthError(err.message);
+    }
 });
 
+registerForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const username = document.getElementById("register-username").value.trim();
+    const password = document.getElementById("register-password").value;
+    try {
+        const data = await api("/api/auth/register", {
+            method: "POST",
+            body: JSON.stringify({ username, password }),
+        });
+        onAuthSuccess(data.token, data.user);
+    } catch (err) {
+        showAuthError(err.message);
+    }
+});
+
+function onAuthSuccess(token, user) {
+    authToken = token;
+    me = user;
+    localStorage.setItem("tripmate:token", token);
+    authOverlay.style.display = "none";
+    connectSocket();
+    openTripPicker();
+}
+
+function doLogout() {
+    authToken = null;
+    me = null;
+    localStorage.removeItem("tripmate:token");
+    if (socket) {
+        socket.disconnect();
+        socket = null;
+    }
+    stopWatchingPosition();
+    currentTrip = null;
+    appEl.hidden = true;
+    tripsOverlay.hidden = true;
+    authOverlay.style.display = "flex";
+    showAuthTab("login");
+}
+
+document.getElementById("logout-btn").addEventListener("click", doLogout);
+document.getElementById("logout-btn-2").addEventListener("click", doLogout);
+
 async function boot() {
-    if (myName) {
-        joinOverlay.style.display = "none";
+    if (!authToken) {
+        authOverlay.style.display = "flex";
+        return;
+    }
+    try {
+        const { user } = await api("/api/auth/me");
+        me = user;
+        authOverlay.style.display = "none";
+        connectSocket();
         await openTripPicker();
+    } catch (err) {
+        authOverlay.style.display = "flex";
     }
 }
 boot();
 
 /* ---------------------------------------------------
-   2) Trip picker — สร้าง/เข้าร่วม/เลือกทริป (รองรับหลายทริป)
+   2) Socket.io — ยืนยันตัวตนด้วย token ตอนเชื่อมต่อ
+--------------------------------------------------- */
+function connectSocket() {
+    if (socket) socket.disconnect();
+    socket = io({ auth: { token: authToken } });
+
+    socket.on("connect", () => {
+        setConnStatus("online");
+        if (currentTrip) socket.emit("join-trip", { tripId: currentTrip.id });
+    });
+    socket.on("disconnect", () => setConnStatus("offline"));
+    socket.on("connect_error", () => setConnStatus("offline"));
+
+    socket.on("trip-active-changed", ({ tripId, isActive }) => {
+        if (currentTrip && currentTrip.id === tripId) {
+            currentTrip.is_active = isActive;
+            updateTripStatusUI(isActive);
+            updateShareToggleUI(currentTrip.share_enabled);
+            if (!isActive) stopWatchingPosition();
+        }
+    });
+
+    socket.on("users-location", ({ trip, members }) => {
+        if (!currentTrip || (trip && trip.id !== currentTrip.id)) return;
+
+        const activeMembers = members.filter((m) => m.lat != null && m.lng != null);
+        const seen = new Set();
+
+        for (const u of activeMembers) {
+            if (u.id === me.id) continue; // ตัวเองใช้ myMarker แยก
+            seen.add(u.id);
+
+            if (!markers[u.id]) {
+                const icon = L.divIcon({
+                    className: "",
+                    html: `<div style="width:16px;height:16px;border-radius:50%;background:${u.color};border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4);"></div>`,
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8],
+                });
+                const marker = L.marker([u.lat, u.lng], { icon }).addTo(map);
+                marker.bindPopup(`${u.name}`);
+                markers[u.id] = { marker, data: u };
+            } else {
+                markers[u.id].marker.setLatLng([u.lat, u.lng]);
+                markers[u.id].data = u;
+            }
+        }
+
+        for (const id in markers) {
+            if (!seen.has(id)) {
+                map.removeLayer(markers[id].marker);
+                delete markers[id];
+            }
+        }
+
+        renderMemberList(members);
+    });
+}
+
+/* ---------------------------------------------------
+   3) Trip picker — สร้าง/เข้าร่วม/เลือกทริป (รองรับหลายทริป)
 --------------------------------------------------- */
 const tripListEl = document.getElementById("trip-list");
 const createTripForm = document.getElementById("create-trip-form");
@@ -65,21 +203,8 @@ const joinTripCodeInput = document.getElementById("join-trip-code");
 const tripsErrorEl = document.getElementById("trips-error");
 const backToTripsBtn = document.getElementById("back-to-trips");
 
-async function api(path, options) {
-    const res = await fetch(path, {
-        headers: { "Content-Type": "application/json" },
-        ...options,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "เกิดข้อผิดพลาด");
-    return data;
-}
-
 async function refreshMyTrips() {
-    const data = await api("/api/whoami", {
-        method: "POST",
-        body: JSON.stringify({ userId: myId, name: myName }),
-    });
+    const data = await api("/api/whoami", { method: "POST" });
     myTrips = data.trips;
     return myTrips;
 }
@@ -93,6 +218,7 @@ async function openTripPicker() {
     }
     tripsOverlay.hidden = false;
     tripsErrorEl.hidden = true;
+    document.getElementById("whoami-username").textContent = me.username;
     await refreshMyTrips();
     renderTripList();
 }
@@ -135,7 +261,7 @@ createTripForm.addEventListener("submit", async (e) => {
     try {
         const { trip } = await api("/api/trips", {
             method: "POST",
-            body: JSON.stringify({ userId: myId, name: myName, tripName }),
+            body: JSON.stringify({ tripName }),
         });
         createTripNameInput.value = "";
         await refreshMyTrips();
@@ -154,7 +280,7 @@ joinTripForm.addEventListener("submit", async (e) => {
     try {
         const { trip } = await api("/api/trips/join", {
             method: "POST",
-            body: JSON.stringify({ userId: myId, name: myName, code }),
+            body: JSON.stringify({ code }),
         });
         joinTripCodeInput.value = "";
         await refreshMyTrips();
@@ -176,7 +302,7 @@ backToTripsBtn.addEventListener("click", () => {
 });
 
 /* ---------------------------------------------------
-   3) เปิดทริปที่เลือก -> โหลดแผนที่ + สมัครห้อง socket ของทริปนี้
+   4) เปิดทริปที่เลือก -> โหลดแผนที่ + สมัครห้อง socket ของทริปนี้
 --------------------------------------------------- */
 async function enterTrip(trip) {
     currentTrip = trip;
@@ -184,6 +310,7 @@ async function enterTrip(trip) {
     appEl.hidden = false;
 
     document.getElementById("current-trip-name").textContent = trip.name;
+    document.getElementById("account-username-display").textContent = me.username;
     updateTripStatusUI(trip.is_active);
     updateShareToggleUI(trip.share_enabled);
     document.getElementById("trip-code-display").textContent = trip.code;
@@ -197,7 +324,7 @@ async function enterTrip(trip) {
     }
     firstFix = true;
 
-    socket.emit("join-trip", { tripId: trip.id, userId: myId });
+    socket.emit("join-trip", { tripId: trip.id });
 
     if (trip.is_active && trip.share_enabled) {
         startWatchingPosition();
@@ -207,7 +334,7 @@ async function enterTrip(trip) {
 }
 
 /* ---------------------------------------------------
-   4) Connection status
+   5) Connection status
 --------------------------------------------------- */
 const connDot = document.getElementById("conn-dot");
 const connText = document.getElementById("conn-text");
@@ -220,15 +347,8 @@ function setConnStatus(state) {
         "กำลังเชื่อมต่อ...";
 }
 
-socket.on("connect", () => {
-    setConnStatus("online");
-    if (currentTrip) socket.emit("join-trip", { tripId: currentTrip.id, userId: myId });
-});
-socket.on("disconnect", () => setConnStatus("offline"));
-socket.on("connect_error", () => setConnStatus("offline"));
-
 /* ---------------------------------------------------
-   5) Tabs
+   6) Tabs
 --------------------------------------------------- */
 document.querySelectorAll(".tab").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -245,7 +365,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
 });
 
 /* ---------------------------------------------------
-   6) Map setup
+   7) Map setup
 --------------------------------------------------- */
 function initMap() {
     map = L.map("map", { zoomControl: false }).setView([13.7563, 100.5018], 13);
@@ -261,7 +381,7 @@ function initMap() {
 }
 
 /* ---------------------------------------------------
-   7) Geolocation -> emit to server (เฉพาะทริปที่เปิดอยู่ + เปิดแชร์)
+   8) Geolocation -> emit to server (เฉพาะทริปที่เปิดอยู่ + เปิดแชร์)
 --------------------------------------------------- */
 function startWatchingPosition() {
     if (watchId !== null) return; // กำลังติดตามอยู่แล้ว
@@ -281,7 +401,7 @@ function startWatchingPosition() {
 
             if (!myMarker) {
                 myMarker = L.marker([lat, lng]).addTo(map);
-                myMarker.bindPopup(`📍 ${myName} (คุณ)`);
+                myMarker.bindPopup(`📍 ${me.username} (คุณ)`);
             } else {
                 myMarker.setLatLng([lat, lng]);
             }
@@ -309,7 +429,7 @@ function stopWatchingPosition() {
 }
 
 /* ---------------------------------------------------
-   8) สวิตช์เปิด/ปิดแชร์ตำแหน่ง "รายทริป" — เก็บลง DB ผ่าน API
+   9) สวิตช์เปิด/ปิดแชร์ตำแหน่ง "รายทริป" — เก็บลง DB ผ่าน API
 --------------------------------------------------- */
 const shareToggleInput = document.getElementById("share-toggle-input");
 
@@ -324,7 +444,7 @@ shareToggleInput.addEventListener("change", async () => {
     try {
         await api(`/api/trips/${currentTrip.id}/share`, {
             method: "PATCH",
-            body: JSON.stringify({ userId: myId, enabled }),
+            body: JSON.stringify({ enabled }),
         });
         currentTrip.share_enabled = enabled;
         if (enabled && currentTrip.is_active) {
@@ -340,7 +460,7 @@ shareToggleInput.addEventListener("change", async () => {
 });
 
 /* ---------------------------------------------------
-   9) เปิด/ปิดทริป (สวิตช์ใหญ่ระดับทริป) — ทริปเก่าปิดแล้วจะไม่รับ GPS อีก
+   10) เปิด/ปิดทริป (สวิตช์ใหญ่ระดับทริป) — ทริปเก่าปิดแล้วจะไม่รับ GPS อีก
 --------------------------------------------------- */
 const toggleTripActiveBtn = document.getElementById("toggle-trip-active-btn");
 
@@ -360,7 +480,7 @@ toggleTripActiveBtn.addEventListener("click", async () => {
     try {
         const { trip } = await api(`/api/trips/${currentTrip.id}/active`, {
             method: "PATCH",
-            body: JSON.stringify({ userId: myId, isActive: nextActive }),
+            body: JSON.stringify({ isActive: nextActive }),
         });
         currentTrip.is_active = !!trip.is_active;
         updateTripStatusUI(currentTrip.is_active);
@@ -376,61 +496,13 @@ toggleTripActiveBtn.addEventListener("click", async () => {
     }
 });
 
-socket.on("trip-active-changed", ({ tripId, isActive }) => {
-    if (currentTrip && currentTrip.id === tripId) {
-        currentTrip.is_active = isActive;
-        updateTripStatusUI(isActive);
-        updateShareToggleUI(currentTrip.share_enabled);
-        if (!isActive) stopWatchingPosition();
-    }
-});
-
 /* ---------------------------------------------------
-   10) Receive all members' locations -> update markers + sidebar
+   11) Sidebar rendering
 --------------------------------------------------- */
 const memberListEl = document.getElementById("member-list");
 const memberCountEl = document.getElementById("member-count");
 const membersPanelListEl = document.getElementById("members-panel-list");
 
-socket.on("users-location", ({ trip, members }) => {
-    if (!currentTrip || (trip && trip.id !== currentTrip.id)) return;
-
-    const activeMembers = members.filter((m) => m.lat != null && m.lng != null);
-    const seen = new Set();
-
-    for (const u of activeMembers) {
-        if (u.id === myId) continue; // ตัวเองใช้ myMarker แยก
-        seen.add(u.id);
-
-        if (!markers[u.id]) {
-            const icon = L.divIcon({
-                className: "",
-                html: `<div style="width:16px;height:16px;border-radius:50%;background:${u.color};border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4);"></div>`,
-                iconSize: [16, 16],
-                iconAnchor: [8, 8],
-            });
-            const marker = L.marker([u.lat, u.lng], { icon }).addTo(map);
-            marker.bindPopup(`${u.name}`);
-            markers[u.id] = { marker, data: u };
-        } else {
-            markers[u.id].marker.setLatLng([u.lat, u.lng]);
-            markers[u.id].data = u;
-        }
-    }
-
-    for (const id in markers) {
-        if (!seen.has(id)) {
-            map.removeLayer(markers[id].marker);
-            delete markers[id];
-        }
-    }
-
-    renderMemberList(members);
-});
-
-/* ---------------------------------------------------
-   11) Sidebar rendering
---------------------------------------------------- */
 function initials(name) {
     return name.trim().slice(0, 2).toUpperCase();
 }
@@ -446,7 +518,7 @@ function timeAgo(ts, shareEnabled) {
 }
 
 function memberCardHtml(u) {
-    const isMe = u.id === myId;
+    const isMe = u.id === me.id;
     return `
         <div class="member-card ${isMe ? "is-me" : ""}">
             <div class="member-avatar" style="background:${u.color}">${initials(u.name)}</div>
@@ -470,6 +542,3 @@ function escapeHtml(str) {
     div.textContent = str;
     return div.innerHTML;
 }
-
-// Refresh "time ago" labels periodically (sidebar re-renders on every users-location tick already)
-setInterval(() => {}, 5000);

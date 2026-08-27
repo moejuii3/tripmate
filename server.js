@@ -5,6 +5,7 @@ const http = require("http");
 const { Server } = require("socket.io");
 const dbConn = require("./db");
 const store = require("./db/store");
+const { hashPassword, verifyPassword, signToken, verifyToken, requireAuth } = require("./auth");
 
 const app = express();
 const server = http.createServer(app);
@@ -20,18 +21,72 @@ function ah(fn) {
     return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
-// ---------------------------------------------------------------------
-// REST API — จัดการทริป / สมาชิก / สวิตช์แชร์ตำแหน่ง (เก็บลง PostgreSQL จริง)
-// (คนหนึ่งคนมี deviceId ถาวรที่เก็บไว้ในเบราว์เซอร์ เพื่อให้เข้าได้หลายทริปพร้อมกัน)
-// ---------------------------------------------------------------------
+function validUsername(u) {
+    return typeof u === "string" && /^[a-zA-Z0-9_.]{3,20}$/.test(u);
+}
 
-// คืนรายการทริปทั้งหมดที่ device นี้เข้าร่วม (ทั้งเปิดและปิด)
+// ---------------------------------------------------------------------
+// Auth — สมัครสมาชิก / เข้าสู่ระบบ (username + password, เก็บรหัสผ่านแบบ bcrypt hash)
+// ---------------------------------------------------------------------
+app.post(
+    "/api/auth/register",
+    ah(async (req, res) => {
+        const { username, password } = req.body || {};
+        if (!validUsername(username)) {
+            return res.status(400).json({
+                error: "ชื่อผู้ใช้ต้องมี 3-20 ตัวอักษร (a-z, 0-9, _ , .)",
+            });
+        }
+        if (typeof password !== "string" || password.length < 6) {
+            return res.status(400).json({ error: "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร" });
+        }
+
+        const passwordHash = await hashPassword(password);
+        const user = await store.createUser(username, passwordHash);
+        const token = signToken(user);
+        res.json({ token, user });
+    })
+);
+
+app.post(
+    "/api/auth/login",
+    ah(async (req, res) => {
+        const { username, password } = req.body || {};
+        if (!username || !password) return res.status(400).json({ error: "กรอกชื่อผู้ใช้และรหัสผ่าน" });
+
+        const user = await store.findUserByUsername(username);
+        if (!user) return res.status(401).json({ error: "ไม่พบชื่อผู้ใช้นี้ หรือรหัสผ่านไม่ถูกต้อง" });
+
+        const ok = await verifyPassword(password, user.password_hash);
+        if (!ok) return res.status(401).json({ error: "ไม่พบชื่อผู้ใช้นี้ หรือรหัสผ่านไม่ถูกต้อง" });
+
+        const token = signToken(user);
+        res.json({ token, user: { id: user.id, username: user.username } });
+    })
+);
+
+app.get(
+    "/api/auth/me",
+    requireAuth,
+    ah(async (req, res) => {
+        const user = await store.findUserById(req.userId);
+        if (!user) return res.status(401).json({ error: "ไม่พบบัญชีนี้แล้ว" });
+        res.json({ user });
+    })
+);
+
+// ---------------------------------------------------------------------
+// REST API — จัดการทริป / สมาชิก / สวิตช์แชร์ตำแหน่ง (ต้องล็อกอินก่อนทุก endpoint)
+// ผู้ใช้หนึ่งบัญชีเข้าได้หลายทริปพร้อมกัน — ตัวตนอ้างอิงจาก JWT เสมอ ไม่รับ userId จาก client
+// ---------------------------------------------------------------------
+app.use("/api/trips", requireAuth);
+app.use("/api/whoami", requireAuth);
+
+// คืนรายการทริปทั้งหมดที่บัญชีนี้เข้าร่วม (ทั้งเปิดและปิด)
 app.post(
     "/api/whoami",
     ah(async (req, res) => {
-        const { userId, name } = req.body || {};
-        if (!userId || !name) return res.status(400).json({ error: "ต้องระบุ userId และ name" });
-        const trips = await store.getDeviceTrips(userId);
+        const trips = await store.getUserTrips(req.userId);
         res.json({ trips });
     })
 );
@@ -40,13 +95,13 @@ app.post(
 app.post(
     "/api/trips",
     ah(async (req, res) => {
-        const { userId, name, tripName } = req.body || {};
-        if (!userId || !tripName) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+        const { tripName } = req.body || {};
+        if (!tripName) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
 
         const trip = await store.createTrip(
             String(tripName).trim().slice(0, 40) || "ทริปใหม่",
-            userId,
-            String(name || "Guest").trim().slice(0, 24) || "Guest"
+            req.userId,
+            req.username
         );
         res.json({ trip });
     })
@@ -56,14 +111,14 @@ app.post(
 app.post(
     "/api/trips/join",
     ah(async (req, res) => {
-        const { userId, name, code } = req.body || {};
-        if (!userId || !code) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
+        const { code } = req.body || {};
+        if (!code) return res.status(400).json({ error: "ข้อมูลไม่ครบ" });
 
         const tripId = String(code).trim().toUpperCase();
         const trip = await store.getTrip(tripId);
         if (!trip) return res.status(404).json({ error: "ไม่พบทริปนี้ ตรวจสอบรหัสอีกครั้ง" });
 
-        await store.addMember(tripId, userId, String(name || "Guest").trim().slice(0, 24) || "Guest");
+        await store.addMember(tripId, req.userId, req.username);
         res.json({ trip: await store.getTrip(tripId) });
     })
 );
@@ -75,6 +130,8 @@ app.get(
         const tripId = req.params.tripId.toUpperCase();
         const trip = await store.getTrip(tripId);
         if (!trip) return res.status(404).json({ error: "ไม่พบทริป" });
+        if (!(await store.isMember(tripId, req.userId)))
+            return res.status(403).json({ error: "ไม่ใช่สมาชิกทริปนี้" });
         res.json({ trip, members: await store.getTripMembers(tripId) });
     })
 );
@@ -84,10 +141,10 @@ app.patch(
     "/api/trips/:tripId/active",
     ah(async (req, res) => {
         const tripId = req.params.tripId.toUpperCase();
-        const { userId, isActive } = req.body || {};
+        const { isActive } = req.body || {};
         const trip = await store.getTrip(tripId);
         if (!trip) return res.status(404).json({ error: "ไม่พบทริป" });
-        if (!(await store.isMember(tripId, userId)))
+        if (!(await store.isMember(tripId, req.userId)))
             return res.status(403).json({ error: "ไม่ใช่สมาชิกทริปนี้" });
 
         const updated = await store.setTripActive(tripId, !!isActive);
@@ -101,13 +158,13 @@ app.patch(
     "/api/trips/:tripId/share",
     ah(async (req, res) => {
         const tripId = req.params.tripId.toUpperCase();
-        const { userId, enabled } = req.body || {};
+        const { enabled } = req.body || {};
         const trip = await store.getTrip(tripId);
         if (!trip) return res.status(404).json({ error: "ไม่พบทริป" });
-        if (!(await store.isMember(tripId, userId)))
+        if (!(await store.isMember(tripId, req.userId)))
             return res.status(403).json({ error: "ไม่ใช่สมาชิกทริปนี้" });
 
-        await store.setMemberShare(tripId, userId, !!enabled);
+        await store.setMemberShare(tripId, req.userId, !!enabled);
         io.to(`trip:${tripId}`).emit("users-location", {
             trip,
             members: await store.getTripMembers(tripId),
@@ -123,20 +180,31 @@ app.use((err, req, res, next) => {
 });
 
 // ---------------------------------------------------------------------
-// Socket.io — แยกห้องตามทริป (trip:<id>) เพื่อไม่ให้ตำแหน่งรั่วข้ามทริป
+// Socket.io — ยืนยันตัวตนด้วย JWT ตอนเชื่อมต่อ + แยกห้องตามทริป (trip:<id>)
 // ---------------------------------------------------------------------
+io.use((socket, next) => {
+    try {
+        const token = socket.handshake.auth?.token;
+        if (!token) return next(new Error("unauthorized"));
+        const payload = verifyToken(token);
+        socket.userId = payload.sub;
+        socket.username = payload.username;
+        next();
+    } catch (err) {
+        next(new Error("unauthorized"));
+    }
+});
+
 io.on("connection", (socket) => {
     let currentTripId = null;
-    let currentUserId = null;
 
     // เข้าห้องของทริปที่กำลังดู (ออกจากห้องเดิมก่อนถ้ามี) — ทำให้สลับดูหลายทริปได้
-    socket.on("join-trip", async ({ tripId, userId }) => {
+    socket.on("join-trip", async ({ tripId }) => {
         try {
-            if (!tripId || !userId || !(await store.isMember(tripId, userId))) return;
+            if (!tripId || !(await store.isMember(tripId, socket.userId))) return;
 
             if (currentTripId) socket.leave(`trip:${currentTripId}`);
             currentTripId = tripId;
-            currentUserId = userId;
             socket.join(`trip:${tripId}`);
 
             const trip = await store.getTrip(tripId);
@@ -149,22 +217,21 @@ io.on("connection", (socket) => {
     socket.on("leave-trip", () => {
         if (currentTripId) socket.leave(`trip:${currentTripId}`);
         currentTripId = null;
-        currentUserId = null;
     });
 
     // รับพิกัด GPS — บันทึกและกระจายเฉพาะเมื่อ "ทริปเปิดอยู่" และ "ผู้ใช้เปิดแชร์ในทริปนี้"
     socket.on("send-location", async ({ tripId, lat, lng }) => {
         try {
-            if (!tripId || !currentUserId || tripId !== currentTripId) return;
+            if (!tripId || tripId !== currentTripId) return;
 
             const trip = await store.getTrip(tripId);
             if (!trip || !trip.is_active) return; // ทริปเก่า/ปิดแล้ว -> ไม่รับ GPS อีก
 
             const members = await store.getTripMembers(tripId);
-            const me = members.find((m) => m.id === currentUserId);
+            const me = members.find((m) => m.id === socket.userId);
             if (!me || !me.share_enabled) return; // ผู้ใช้ปิดสวิตช์แชร์ในทริปนี้เอง
 
-            await store.updateLocation(tripId, currentUserId, lat, lng);
+            await store.updateLocation(tripId, socket.userId, lat, lng);
             io.to(`trip:${tripId}`).emit("users-location", {
                 trip,
                 members: await store.getTripMembers(tripId),
@@ -192,7 +259,7 @@ dbConn
             console.log(`Server running : http://localhost:${PORT}`);
             if (!dbConn.isEnabled()) {
                 console.warn(
-                    "[db] DATABASE_URL ยังไม่ถูกตั้งค่า — ฟีเจอร์ทริป/DB จะใช้งานไม่ได้ จนกว่าจะตั้งค่าใน .env แล้วรีสตาร์ท"
+                    "[db] DATABASE_URL ยังไม่ถูกตั้งค่า — ฟีเจอร์สมัคร/เข้าสู่ระบบและทริปจะใช้งานไม่ได้ จนกว่าจะตั้งค่าใน .env แล้วรีสตาร์ท"
                 );
             }
         });

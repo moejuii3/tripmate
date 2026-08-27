@@ -5,6 +5,17 @@
 -- ============================================================
 
 -- ---------------------------------------------------------------
+-- users: บัญชีผู้ใช้จริง (สมัคร/เข้าสู่ระบบด้วย username + password)
+-- password_hash เก็บด้วย bcrypt เท่านั้น ห้ามเก็บรหัสผ่านตรงๆ เด็ดขาด
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+    id             TEXT PRIMARY KEY,
+    username       TEXT NOT NULL UNIQUE,
+    password_hash  TEXT NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------
 -- trips: หนึ่งแถว = หนึ่งทริป มี "รหัสทริป" (id) ให้แชร์ต่อกันเข้าร่วม
 -- ended_at ไม่ใช่ NULL แปลว่าทริปนี้ "จบแล้ว" -> ปิด GPS ถาวรของทุกคนในทริป
 -- ---------------------------------------------------------------
@@ -17,9 +28,10 @@ CREATE TABLE IF NOT EXISTS trips (
 
 -- ---------------------------------------------------------------
 -- members: สมาชิกของแต่ละทริป
--- id = "<trip_id>:<device_id>"  -> คนคนเดียวกัน (device_id เดิม) เข้าได้หลายทริป
+-- id = "<trip_id>:<user_id>"  -> คนคนเดียวกัน (บัญชีเดิม) เข้าได้หลายทริป
 --       เพราะแต่ละทริปจะได้แถวของตัวเอง แต่ถ้าเข้าทริปเดิมซ้ำ (เช่นรีเฟรชหน้าเว็บ)
 --       จะอัปเดตแถวเดิม ไม่สร้างซ้ำ (ดู ON CONFLICT ใน server.js)
+-- user_id = ผู้ใช้ที่ล็อกอินอยู่ (อ้างอิงตาราง users) แทนที่จะเป็น device id แบบเดิม
 -- gps_enabled = ผู้ใช้กดเปิด/ปิดแชร์ตำแหน่งเอง (true/false)
 -- last_location_at = เวลาที่ "พิกัด" ถูกอัปเดตจริง ๆ ครั้งล่าสุด (ไว้เช็คว่าขาดสัญญาณ)
 -- last_seen = เวลาที่เห็นความเคลื่อนไหวล่าสุดของสมาชิก (ออนไลน์/ออฟไลน์)
@@ -27,7 +39,7 @@ CREATE TABLE IF NOT EXISTS trips (
 CREATE TABLE IF NOT EXISTS members (
     id                TEXT PRIMARY KEY,
     trip_id           TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-    device_id         TEXT NOT NULL,
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name              TEXT NOT NULL,
     color             TEXT NOT NULL,
     gps_enabled       BOOLEAN NOT NULL DEFAULT true,
@@ -39,6 +51,7 @@ CREATE TABLE IF NOT EXISTS members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_members_trip ON members (trip_id);
+CREATE INDEX IF NOT EXISTS idx_members_user ON members (user_id);
 
 -- หมายเหตุ: ตั้งใจไม่เก็บ "ประวัติ" พิกัดย้อนหลังเลย เก็บเฉพาะตำแหน่งปัจจุบัน
 -- (คอลัมน์ current_lat / current_lng / last_location_at ในตาราง members ด้านบน)
