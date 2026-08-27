@@ -17,6 +17,10 @@
 
 * { box-sizing: border-box; }
 
+/* บังคับให้ attribute hidden ชนะเสมอ ไม่ว่า component ไหนจะตั้ง display ทับไว้ก็ตาม
+   (บั๊กเดิม: .join-overlay / .app ตั้ง display:flex ทำให้ hidden ไม่มีผล หน้าเลยซ้อนกันหมด) */
+[hidden] { display: none !important; }
+
 html, body {
     margin: 0;
     padding: 0;
