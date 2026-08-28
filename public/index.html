@@ -1,180 +1,431 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TripMate — Live Location</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>Travel Buddy — TripMate</title>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="style.css" />
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @layer base {
+    html, body { width: 100vw; margin: 0; padding: 0; background-color: #fcf9f8; }
+    body { overscroll-behavior: none; font-family: 'Plus Jakarta Sans', sans-serif; }
+    .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  }
+  ::-webkit-scrollbar { display: none; }
+  /* บังคับให้ attribute hidden ชนะเสมอ ไม่ว่า component จะตั้ง display อะไรทับไว้ */
+  [hidden] { display: none !important; }
+
+  @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  .marker-pin { animation: float 4s ease-in-out infinite; }
+  .marker-pulse { animation: pulse-ring 2s cubic-bezier(0.2,0.6,0.4,1) infinite; }
+  @keyframes pulse-ring {
+    0% { transform: scale(0.9); opacity: .5; }
+    80%, 100% { transform: scale(1.6); opacity: 0; }
+  }
+  .leaflet-container { background: #e5e2e1; font-family: 'Plus Jakarta Sans', sans-serif; }
+  .leaflet-div-icon { background: transparent; border: none; }
+</style>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script id="tailwind-config">
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "surface-container-lowest": "#ffffff",
+        "surface": "#fcf9f8",
+        "on-error": "#ffffff",
+        "secondary-fixed": "#cdf200",
+        "primary-container": "#2e5bff",
+        "on-tertiary": "#ffffff",
+        "on-error-container": "#93000a",
+        "surface-variant": "#e5e2e1",
+        "inverse-primary": "#b8c3ff",
+        "on-background": "#1c1b1b",
+        "surface-bright": "#fcf9f8",
+        "error": "#ba1a1a",
+        "tertiary-fixed": "#e4e2de",
+        "on-surface": "#1c1b1b",
+        "on-tertiary-fixed": "#1b1c1a",
+        "inverse-surface": "#313030",
+        "on-tertiary-fixed-variant": "#474744",
+        "surface-container-low": "#f6f3f2",
+        "on-surface-variant": "#434656",
+        "surface-container": "#f0eded",
+        "inverse-on-surface": "#f3f0ef",
+        "on-secondary-fixed": "#181e00",
+        "secondary": "#556500",
+        "on-secondary": "#ffffff",
+        "surface-tint": "#124af0",
+        "primary-fixed": "#dde1ff",
+        "on-primary-fixed-variant": "#0035be",
+        "surface-container-high": "#eae7e7",
+        "outline": "#747688",
+        "on-secondary-container": "#596a00",
+        "on-secondary-fixed-variant": "#3f4c00",
+        "primary-fixed-dim": "#b8c3ff",
+        "error-container": "#ffdad6",
+        "on-primary-container": "#efefff",
+        "tertiary-fixed-dim": "#c8c6c3",
+        "surface-container-highest": "#e5e2e1",
+        "tertiary-container": "#6d6d6a",
+        "outline-variant": "#c4c5d9",
+        "on-primary-fixed": "#001356",
+        "secondary-fixed-dim": "#b4d400",
+        "on-tertiary-container": "#f2f0ec",
+        "secondary-container": "#cbef00",
+        "primary": "#0040e0",
+        "tertiary": "#555552",
+        "background": "#fcf9f8",
+        "on-primary": "#ffffff",
+        "surface-dim": "#dcd9d9"
+      },
+      borderRadius: { DEFAULT: "0.25rem", lg: "0.5rem", xl: "0.75rem", full: "9999px" },
+      spacing: { "margin-mobile": "20px", "overlap-offset": "-32px", "margin-desktop": "64px", unit: "8px", "container-max": "1280px", gutter: "24px" },
+      fontFamily: {
+        "body-lg": ["plusJakartaSans"], "body-md": ["plusJakartaSans"], "display-lg": ["plusJakartaSans"],
+        "label-md": ["plusJakartaSans"], "headline-md": ["plusJakartaSans"], "display-xl": ["plusJakartaSans"],
+        "display-lg-mobile": ["plusJakartaSans"], "headline-lg": ["plusJakartaSans"]
+      },
+      fontSize: {
+        "body-lg": ["18px", { lineHeight: "28px", fontWeight: "400" }],
+        "body-md": ["16px", { lineHeight: "24px", fontWeight: "400" }],
+        "display-lg": ["36px", { lineHeight: "44px", letterSpacing: "-0.02em", fontWeight: "800" }],
+        "label-md": ["14px", { lineHeight: "20px", letterSpacing: "0.05em", fontWeight: "600" }],
+        "headline-md": ["24px", { lineHeight: "32px", fontWeight: "700" }],
+        "display-xl": ["48px", { lineHeight: "56px", letterSpacing: "-0.02em", fontWeight: "800" }],
+        "display-lg-mobile": ["32px", { lineHeight: "40px", fontWeight: "800" }],
+        "headline-lg": ["30px", { lineHeight: "38px", fontWeight: "700" }]
+      }
+    }
+  }
+};
+</script>
 </head>
-<body>
+<body class="bg-surface font-body-md text-on-surface min-h-screen">
 
-    <!-- ===== Auth (สมัครสมาชิก / เข้าสู่ระบบ) ===== -->
-    <div id="auth-overlay" class="join-overlay">
-        <div class="join-card">
-            <div class="join-logo">🧭</div>
-            <h1>TripMate</h1>
-            <p class="join-sub">ติดตามตำแหน่งเพื่อนร่วมทริปแบบเรียลไทม์</p>
+<!-- ============================================================
+     AUTH SCREEN — เข้าสู่ระบบ / สมัครสมาชิก
+============================================================ -->
+<div id="auth-screen" class="fixed inset-0 z-[100] flex items-center justify-center bg-surface px-margin-mobile">
+  <div class="w-full max-w-[380px] flex flex-col items-center">
+    <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mb-5 shadow-[0_12px_32px_rgba(0,64,224,0.25)]">
+      <span class="material-symbols-outlined text-on-primary text-[32px]">travel_explore</span>
+    </div>
+    <h1 class="font-display-lg-mobile text-on-surface text-center">Travel Buddy</h1>
+    <p class="font-body-md text-on-surface-variant text-center mt-2 mb-8">ติดตามตำแหน่งเพื่อนร่วมทริปแบบเรียลไทม์</p>
 
-            <div class="auth-tabs">
-                <button type="button" id="auth-tab-login" class="auth-tab active">เข้าสู่ระบบ</button>
-                <button type="button" id="auth-tab-register" class="auth-tab">สมัครสมาชิก</button>
-            </div>
+    <div class="w-full bg-surface-container-low p-1 rounded-full flex mb-6">
+      <button type="button" id="auth-tab-login" class="flex-1 py-2.5 rounded-full font-label-md text-sm transition-colors bg-surface-container-lowest text-primary shadow-sm">เข้าสู่ระบบ</button>
+      <button type="button" id="auth-tab-register" class="flex-1 py-2.5 rounded-full font-label-md text-sm transition-colors text-on-surface-variant">สมัครสมาชิก</button>
+    </div>
 
-            <form id="login-form" class="auth-form">
-                <label for="login-username">ชื่อผู้ใช้</label>
-                <input id="login-username" type="text" maxlength="20" autocomplete="username" required />
-                <label for="login-password">รหัสผ่าน</label>
-                <input id="login-password" type="password" autocomplete="current-password" required />
-                <button type="submit">เข้าสู่ระบบ</button>
-            </form>
+    <form id="login-form" class="w-full flex flex-col gap-3">
+      <input id="login-username" type="text" placeholder="ชื่อผู้ใช้" autocomplete="username" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low border border-transparent focus:border-primary focus:bg-surface-container-lowest outline-none font-body-md text-on-surface placeholder:text-outline transition-colors" />
+      <input id="login-password" type="password" placeholder="รหัสผ่าน" autocomplete="current-password" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low border border-transparent focus:border-primary focus:bg-surface-container-lowest outline-none font-body-md text-on-surface placeholder:text-outline transition-colors" />
+      <button type="submit" class="w-full mt-2 py-3.5 rounded-full bg-primary text-on-primary font-label-md text-sm shadow-[0_8px_24px_rgba(0,64,224,0.25)] active:scale-[0.98] transition-transform">เข้าสู่ระบบ</button>
+    </form>
 
-            <form id="register-form" class="auth-form" hidden>
-                <label for="register-username">ตั้งชื่อผู้ใช้ (3-20 ตัวอักษร, a-z 0-9 _ .)</label>
-                <input id="register-username" type="text" maxlength="20" autocomplete="username" required />
-                <label for="register-password">ตั้งรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)</label>
-                <input id="register-password" type="password" autocomplete="new-password" required />
-                <button type="submit">สมัครสมาชิก</button>
-            </form>
+    <form id="register-form" class="w-full flex-col gap-3" hidden>
+      <input id="register-username" type="text" placeholder="ตั้งชื่อผู้ใช้ (3-20 ตัวอักษร, a-z 0-9 _ .)" autocomplete="username" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low border border-transparent focus:border-primary focus:bg-surface-container-lowest outline-none font-body-md text-on-surface placeholder:text-outline transition-colors" />
+      <input id="register-password" type="password" placeholder="ตั้งรหัสผ่าน (อย่างน้อย 6 ตัวอักษร)" autocomplete="new-password" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low border border-transparent focus:border-primary focus:bg-surface-container-lowest outline-none font-body-md text-on-surface placeholder:text-outline transition-colors" />
+      <button type="submit" class="w-full mt-2 py-3.5 rounded-full bg-secondary-fixed text-on-secondary-fixed font-label-md text-sm shadow-[0_8px_24px_rgba(205,242,0,0.35)] active:scale-[0.98] transition-transform">สมัครสมาชิก</button>
+    </form>
 
-            <p id="auth-error" class="trips-error" hidden></p>
+    <p id="auth-error" class="font-body-md text-[13px] text-error text-center mt-4" hidden></p>
+  </div>
+</div>
+
+<!-- ============================================================
+     MY TRIPS SCREEN — หน้ารวมทริปของฉัน (หลังล็อกอิน)
+============================================================ -->
+<div id="trips-screen" class="fixed inset-0 z-[90] flex flex-col bg-surface" hidden>
+  <header class="fixed top-0 inset-x-0 z-50 bg-surface/80 backdrop-blur-xl pt-safe shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
+    <div class="h-16 px-margin-mobile flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="material-symbols-outlined text-primary text-[28px]">travel_explore</span>
+        <span class="font-headline-md text-headline-md text-on-surface">My Trips</span>
+      </div>
+      <button id="logout-btn" class="w-10 h-10 rounded-full bg-surface-container-low flex items-center justify-center text-on-surface-variant" title="ออกจากระบบ">
+        <span class="material-symbols-outlined text-[20px]">logout</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="flex-grow relative w-full pt-16 pb-24 bg-surface px-margin-mobile overflow-y-auto">
+    <div class="flex flex-col w-full relative">
+      <p class="font-body-md text-on-surface-variant mt-4">สวัสดี, <strong id="trips-username" class="text-on-surface font-bold">—</strong></p>
+
+      <div id="active-trip-section" class="mt-6" hidden>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-headline-md text-on-surface">ทริปที่กำลังไป</h2>
+          <span class="bg-primary text-on-primary px-3 py-1 rounded-full font-label-md text-xs uppercase tracking-widest shadow-sm">Live</span>
         </div>
+        <div id="active-trip-card"></div>
+      </div>
+
+      <div id="other-trips-section" class="mt-10">
+        <h2 class="font-headline-md text-on-surface mb-4">ทริปอื่น ๆ</h2>
+        <div id="other-trips-list" class="flex flex-col gap-4"></div>
+      </div>
+
+      <div id="closed-trips-section" class="mt-8" hidden>
+        <h2 class="font-headline-md text-on-surface mb-4">ทริปที่ผ่านมา</h2>
+        <div id="closed-trips-list" class="flex flex-col gap-3"></div>
+      </div>
+
+      <p id="trips-empty-msg" class="font-body-md text-on-surface-variant text-center py-16" hidden>ยังไม่มีทริป — กดปุ่ม + ด้านล่างเพื่อสร้างทริปแรกของคุณ</p>
+
+      <div class="h-8"></div>
+    </div>
+  </main>
+
+  <!-- Prominent FAB (Lime Glow) -->
+  <button id="fab-add-trip" class="fixed bottom-8 right-margin-mobile z-40 w-[64px] h-[64px] bg-secondary-fixed text-on-secondary-fixed rounded-full flex items-center justify-center shadow-[0_12px_40px_rgba(205,242,0,0.35)] transition-transform active:scale-95 hover:scale-105">
+    <span class="material-symbols-outlined text-[32px]">add</span>
+  </button>
+</div>
+
+<!-- ===== Create/Join Trip Bottom Sheet ===== -->
+<div id="trip-sheet-backdrop" class="fixed inset-0 z-[110] bg-on-surface/40 backdrop-blur-sm flex items-end justify-center" hidden>
+  <div class="w-full max-w-[480px] bg-surface rounded-t-[28px] p-6 pb-safe shadow-[0_-20px_60px_rgba(0,0,0,0.2)] animate-[slide-up_0.25s_ease]">
+    <div class="w-10 h-1.5 bg-surface-container-high rounded-full mx-auto mb-5"></div>
+
+    <div class="w-full bg-surface-container-low p-1 rounded-full flex mb-5">
+      <button type="button" id="sheet-tab-create" class="flex-1 py-2.5 rounded-full font-label-md text-sm transition-colors bg-surface-container-lowest text-primary shadow-sm">สร้างทริปใหม่</button>
+      <button type="button" id="sheet-tab-join" class="flex-1 py-2.5 rounded-full font-label-md text-sm transition-colors text-on-surface-variant">เข้าร่วมทริป</button>
     </div>
 
-    <!-- ===== Trip Picker (เลือก/สร้าง/เข้าร่วมทริป — รองรับหลายทริป) ===== -->
-    <div id="trips-overlay" class="join-overlay" hidden>
-        <div class="trips-card">
-            <div class="trips-card-head">
-                <div class="join-logo">🧭</div>
-                <h1>ทริปของฉัน</h1>
-                <p class="join-sub">
-                    เข้าสู่ระบบในชื่อ <strong id="whoami-username">—</strong> ·
-                    <button type="button" id="logout-btn" class="link-btn">ออกจากระบบ</button>
-                </p>
-            </div>
+    <form id="create-trip-form" class="flex flex-col gap-3">
+      <input id="create-trip-name" type="text" maxlength="40" placeholder="ตั้งชื่อทริป เช่น เที่ยวเชียงใหม่" autocomplete="off" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <button type="submit" class="w-full py-3.5 rounded-full bg-primary text-on-primary font-label-md text-sm active:scale-[0.98] transition-transform">+ สร้างทริป</button>
+    </form>
 
-            <div id="trip-list" class="trip-list"></div>
+    <form id="join-trip-form" class="flex-col gap-3" hidden>
+      <input id="join-trip-code" type="text" maxlength="6" placeholder="กรอกรหัสเข้าร่วม เช่น 7K3P9M" autocomplete="off" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md uppercase tracking-widest" />
+      <button type="submit" class="w-full py-3.5 rounded-full bg-secondary-fixed text-on-secondary-fixed font-label-md text-sm active:scale-[0.98] transition-transform">เข้าร่วมทริป</button>
+    </form>
 
-            <div class="trips-actions">
-                <form id="create-trip-form" class="trip-inline-form">
-                    <input id="create-trip-name" type="text" maxlength="40" placeholder="ตั้งชื่อทริปใหม่ เช่น เที่ยวเชียงใหม่" autocomplete="off" required />
-                    <button type="submit">+ สร้างทริป</button>
-                </form>
-                <form id="join-trip-form" class="trip-inline-form">
-                    <input id="join-trip-code" type="text" maxlength="6" placeholder="กรอกรหัสเข้าร่วม เช่น 7K3P9M" autocomplete="off" required />
-                    <button type="submit" class="btn-secondary">เข้าร่วมทริป</button>
-                </form>
-                <p id="trips-error" class="trips-error" hidden></p>
-            </div>
+    <p id="sheet-error" class="font-body-md text-[13px] text-error text-center mt-4" hidden></p>
+    <button id="sheet-close-btn" class="w-full py-3 mt-2 font-label-md text-sm text-on-surface-variant">ยกเลิก</button>
+  </div>
+</div>
+
+<!-- ============================================================
+     TRIP SCREEN — ในทริป: แผนที่ / กำหนดการ / ค่าใช้จ่าย / สมาชิก
+============================================================ -->
+<div id="trip-screen" class="fixed inset-0 z-[90] flex flex-col bg-surface" hidden>
+  <header class="fixed top-0 inset-x-0 z-50 bg-surface/80 backdrop-blur-xl pt-safe shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
+    <div class="h-16 px-4 flex items-center gap-3">
+      <button id="trip-back-btn" class="w-10 h-10 flex items-center justify-center text-on-surface flex-shrink-0">
+        <span class="material-symbols-outlined">arrow_back_ios_new</span>
+      </button>
+      <div class="min-w-0 flex-1">
+        <h1 id="trip-screen-name" class="font-headline-md text-[18px] text-on-surface truncate leading-tight">—</h1>
+        <p class="font-body-md text-[12px] text-on-surface-variant leading-tight" id="trip-screen-sub">—</p>
+      </div>
+      <span id="trip-screen-badge" class="bg-primary text-on-primary px-3 py-1 rounded-full font-label-md text-[10px] uppercase tracking-widest shadow-sm flex-shrink-0">เปิดอยู่</span>
+    </div>
+  </header>
+
+  <main class="flex-grow relative w-full pt-16 pb-24 bg-surface overflow-hidden">
+
+    <!-- ---- Tab: Map ---- -->
+    <section id="trip-tab-map" class="trip-tab absolute inset-0 pt-16 pb-24">
+      <div id="map" class="absolute inset-0 top-16 bottom-24 w-full h-auto"></div>
+
+      <!-- Floating header overlay -->
+      <div class="absolute top-20 left-4 right-4 z-[500] flex justify-between items-center bg-surface/90 backdrop-blur-md rounded-full px-4 py-3 shadow-[0_4px_24px_rgba(0,0,0,0.08)]">
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary flex-shrink-0">
+            <span class="material-symbols-outlined text-[18px]">group</span>
+          </div>
+          <div class="min-w-0">
+            <h2 class="font-label-md text-on-surface leading-tight truncate" id="map-member-count">0 คน</h2>
+            <p class="font-body-md text-[12px] text-on-surface-variant leading-tight" id="map-conn-status">กำลังเชื่อมต่อ...</p>
+          </div>
         </div>
+        <button id="share-toggle-btn" class="flex items-center gap-2 bg-secondary-container px-3 py-1.5 rounded-full text-on-secondary-container transition-colors duration-300 flex-shrink-0">
+          <span class="material-symbols-outlined text-[16px]" id="share-toggle-icon">my_location</span>
+          <span class="font-label-md text-[12px]" id="share-toggle-text">Sharing</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ---- Tab: Schedule ---- -->
+    <section id="trip-tab-schedule" class="trip-tab absolute inset-0 pt-16 pb-24 px-margin-mobile overflow-y-auto" hidden>
+      <div class="flex flex-col w-full pt-4">
+        <div id="itinerary-list" class="flex flex-col relative w-full pb-4"></div>
+        <p id="itinerary-empty-msg" class="font-body-md text-on-surface-variant text-center py-16" hidden>ยังไม่มีกำหนดการ — กดปุ่มด้านล่างเพื่อเพิ่มกิจกรรมแรก</p>
+        <button id="add-itinerary-btn" class="w-full py-3.5 rounded-full bg-primary text-on-primary font-label-md text-sm mt-4 mb-8 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+          <span class="material-symbols-outlined text-[20px]">add</span> เพิ่มกิจกรรม
+        </button>
+      </div>
+    </section>
+
+    <!-- ---- Tab: Expenses ---- -->
+    <section id="trip-tab-expenses" class="trip-tab absolute inset-0 pt-16 pb-24 px-margin-mobile overflow-y-auto" hidden>
+      <div class="flex flex-col w-full gap-5 pt-4 pb-8">
+        <section class="bg-surface-container-low rounded-[24px] p-6 shadow-sm flex flex-col gap-3">
+          <div class="flex justify-between items-center">
+            <h2 class="font-headline-md text-on-surface">ค่าใช้จ่ายรวม</h2>
+            <button id="edit-budget-btn" class="text-primary font-label-md text-[12px]">ตั้งงบประมาณ</button>
+          </div>
+          <div class="flex flex-col gap-1">
+            <span class="font-display-xl text-[36px] font-extrabold text-on-surface" id="expenses-total">฿0</span>
+            <span class="font-body-md text-outline text-sm" id="expenses-budget-label">ยังไม่ได้ตั้งงบประมาณ</span>
+          </div>
+          <div class="w-full bg-surface-variant rounded-full h-2 mt-1" id="expenses-budget-bar-wrap" hidden>
+            <div class="bg-primary h-2 rounded-full" id="expenses-budget-bar" style="width:0%"></div>
+          </div>
+          <button id="add-expense-btn" class="w-full py-3 rounded-full bg-primary text-on-primary font-label-md text-sm mt-2 flex items-center justify-center gap-2 active:scale-[0.98] transition-transform">
+            <span class="material-symbols-outlined text-[20px]">add</span> เพิ่มค่าใช้จ่าย
+          </button>
+        </section>
+
+        <section class="flex flex-col gap-3">
+          <h3 class="font-headline-md text-[18px] text-on-surface px-1">ใครติดเงินใคร</h3>
+          <div id="balances-list" class="flex gap-3 overflow-x-auto pb-2 px-1"></div>
+        </section>
+
+        <section class="flex flex-col gap-3">
+          <h3 class="font-headline-md text-[18px] text-on-surface px-1">รายการล่าสุด</h3>
+          <div id="expenses-list" class="flex flex-col gap-0 bg-surface-container-low rounded-[24px] overflow-hidden shadow-sm"></div>
+          <p id="expenses-empty-msg" class="font-body-md text-on-surface-variant text-center py-10" hidden>ยังไม่มีรายการค่าใช้จ่าย</p>
+        </section>
+      </div>
+    </section>
+
+    <!-- ---- Tab: Members ---- -->
+    <section id="trip-tab-members" class="trip-tab absolute inset-0 pt-16 pb-24 px-margin-mobile overflow-y-auto" hidden>
+      <div class="flex flex-col gap-5 pt-2">
+        <div class="bg-surface-container-low rounded-[20px] p-5 flex flex-col gap-3">
+          <h3 class="font-headline-md text-[17px] text-on-surface">ข้อมูลทริป</h3>
+          <div class="flex justify-between items-center py-2 border-b border-surface-container-high">
+            <span class="font-body-md text-on-surface-variant text-sm">รหัสเชิญเพื่อน</span>
+            <strong id="member-trip-code" class="font-label-md text-primary tracking-widest">—</strong>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="font-body-md text-on-surface-variant text-sm">สถานะ</span>
+            <strong id="member-trip-status" class="font-label-md text-sm">—</strong>
+          </div>
+          <button id="toggle-trip-active-btn" class="w-full py-3 rounded-full bg-surface-container-high text-on-surface font-label-md text-sm mt-1 active:scale-[0.98] transition-transform">ปิดทริปนี้</button>
+          <p class="font-body-md text-[12px] text-on-surface-variant leading-relaxed">ทริปที่ปิดแล้วจะไม่รับตำแหน่ง GPS จากสมาชิกอีก เหมาะสำหรับทริปเก่าที่จบไปแล้ว</p>
+        </div>
+
+        <div class="bg-surface-container-low rounded-[20px] p-5 flex flex-col gap-1">
+          <h3 class="font-headline-md text-[17px] text-on-surface mb-2">สมาชิกในทริปนี้</h3>
+          <div id="members-panel-list" class="flex flex-col gap-1"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Trip-scoped bottom nav -->
+  <nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-1px_8px_rgba(0,0,0,0.04)]">
+    <div class="flex justify-around items-center h-20 px-2">
+      <button class="trip-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-primary font-bold transition-all" data-tab="map">
+        <span class="material-symbols-outlined">map</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Map</span>
+      </button>
+      <button class="trip-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-on-surface-variant transition-all" data-tab="schedule">
+        <span class="material-symbols-outlined">calendar_month</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Schedule</span>
+      </button>
+      <button class="trip-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-on-surface-variant transition-all" data-tab="expenses">
+        <span class="material-symbols-outlined">payments</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Expenses</span>
+      </button>
+      <button class="trip-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-on-surface-variant transition-all" data-tab="members">
+        <span class="material-symbols-outlined">group</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Members</span>
+      </button>
     </div>
+  </nav>
+</div>
 
-    <!-- ===== App Shell ===== -->
-    <div class="app" id="app" hidden>
+<!-- ===== Add Itinerary Item Sheet ===== -->
+<div id="itinerary-sheet-backdrop" class="fixed inset-0 z-[110] bg-on-surface/40 backdrop-blur-sm flex items-end justify-center" hidden>
+  <div class="w-full max-w-[480px] bg-surface rounded-t-[28px] p-6 pb-safe shadow-[0_-20px_60px_rgba(0,0,0,0.2)] max-h-[85vh] overflow-y-auto">
+    <div class="w-10 h-1.5 bg-surface-container-high rounded-full mx-auto mb-5"></div>
+    <h3 class="font-headline-md text-on-surface mb-4">เพิ่มกิจกรรม</h3>
+    <form id="itinerary-form" class="flex flex-col gap-3">
+      <input id="itinerary-title" type="text" maxlength="120" placeholder="ชื่อกิจกรรม เช่น ไหว้พระวัดอรุณ" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <select id="itinerary-category" class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md">
+        <option value="sight">🏛️ สถานที่ท่องเที่ยว</option>
+        <option value="food">🍽️ อาหาร</option>
+        <option value="transport">🚗 การเดินทาง</option>
+        <option value="hotel">🏨 ที่พัก</option>
+        <option value="activity">🎟️ กิจกรรม</option>
+        <option value="other">📌 อื่นๆ</option>
+      </select>
+      <input id="itinerary-location" type="text" maxlength="120" placeholder="สถานที่ (ไม่บังคับ)"
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <input id="itinerary-start" type="datetime-local"
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <textarea id="itinerary-description" maxlength="500" placeholder="รายละเอียดเพิ่มเติม (ไม่บังคับ)" rows="2"
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md resize-none"></textarea>
+      <button type="submit" class="w-full py-3.5 rounded-full bg-primary text-on-primary font-label-md text-sm active:scale-[0.98] transition-transform mt-1">เพิ่มลงกำหนดการ</button>
+    </form>
+    <button id="itinerary-sheet-close" class="w-full py-3 mt-2 font-label-md text-sm text-on-surface-variant">ยกเลิก</button>
+  </div>
+</div>
 
-        <header class="topbar">
-            <button id="back-to-trips" class="brand brand-btn" title="ทริปของฉัน">
-                <span class="brand-logo">🧭</span>
-                <span class="brand-name">TripMate</span>
-            </button>
+<!-- ===== Add Expense Sheet ===== -->
+<div id="expense-sheet-backdrop" class="fixed inset-0 z-[110] bg-on-surface/40 backdrop-blur-sm flex items-end justify-center" hidden>
+  <div class="w-full max-w-[480px] bg-surface rounded-t-[28px] p-6 pb-safe shadow-[0_-20px_60px_rgba(0,0,0,0.2)]">
+    <div class="w-10 h-1.5 bg-surface-container-high rounded-full mx-auto mb-5"></div>
+    <h3 class="font-headline-md text-on-surface mb-4">เพิ่มค่าใช้จ่าย</h3>
+    <form id="expense-form" class="flex flex-col gap-3">
+      <input id="expense-description" type="text" maxlength="120" placeholder="รายละเอียด เช่น มื้อเย็น" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <input id="expense-amount" type="number" step="0.01" min="0.01" placeholder="จำนวนเงิน (บาท)" required
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <select id="expense-category" class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md">
+        <option value="food">🍽️ อาหาร</option>
+        <option value="transport">🚗 การเดินทาง</option>
+        <option value="stay">🏨 ที่พัก</option>
+        <option value="activity">🎟️ กิจกรรม</option>
+        <option value="drinks">🍹 เครื่องดื่ม</option>
+        <option value="shopping">🛍️ ช้อปปิ้ง</option>
+        <option value="other">📌 อื่นๆ</option>
+      </select>
+      <p class="font-body-md text-[12px] text-on-surface-variant -mt-1">จ่ายโดยคุณ และจะหารเท่ากันกับสมาชิกทุกคนในทริปนี้</p>
+      <button type="submit" class="w-full py-3.5 rounded-full bg-primary text-on-primary font-label-md text-sm active:scale-[0.98] transition-transform mt-1">บันทึกค่าใช้จ่าย</button>
+    </form>
+    <button id="expense-sheet-close" class="w-full py-3 mt-2 font-label-md text-sm text-on-surface-variant">ยกเลิก</button>
+  </div>
+</div>
 
-            <div class="current-trip">
-                <span id="current-trip-name" class="current-trip-name">—</span>
-                <span id="current-trip-badge" class="trip-badge trip-badge-active">เปิดอยู่</span>
-            </div>
+<!-- ===== Set Budget Sheet ===== -->
+<div id="budget-sheet-backdrop" class="fixed inset-0 z-[110] bg-on-surface/40 backdrop-blur-sm flex items-end justify-center" hidden>
+  <div class="w-full max-w-[480px] bg-surface rounded-t-[28px] p-6 pb-safe shadow-[0_-20px_60px_rgba(0,0,0,0.2)]">
+    <div class="w-10 h-1.5 bg-surface-container-high rounded-full mx-auto mb-5"></div>
+    <h3 class="font-headline-md text-on-surface mb-4">ตั้งงบประมาณทริป</h3>
+    <form id="budget-form" class="flex flex-col gap-3">
+      <input id="budget-amount" type="number" step="0.01" min="0" placeholder="งบประมาณทั้งหมด (บาท)"
+        class="w-full px-4 py-3.5 rounded-xl bg-surface-container-low outline-none focus:ring-2 focus:ring-primary font-body-md" />
+      <button type="submit" class="w-full py-3.5 rounded-full bg-primary text-on-primary font-label-md text-sm active:scale-[0.98] transition-transform mt-1">บันทึกงบประมาณ</button>
+    </form>
+    <button id="budget-sheet-close" class="w-full py-3 mt-2 font-label-md text-sm text-on-surface-variant">ยกเลิก</button>
+  </div>
+</div>
 
-            <nav class="tabs">
-                <button class="tab active" data-tab="location">📍 ตำแหน่ง</button>
-                <button class="tab" data-tab="itinerary">🗓️ กำหนดการ</button>
-                <button class="tab" data-tab="expenses">💸 ค่าใช้จ่าย</button>
-                <button class="tab" data-tab="members">👥 สมาชิก</button>
-            </nav>
-
-            <label class="share-toggle" title="เปิด/ปิดการแชร์ตำแหน่งของฉันในทริปนี้">
-                <span class="share-toggle-label">แชร์ตำแหน่ง</span>
-                <input type="checkbox" id="share-toggle-input" checked />
-                <span class="share-toggle-slider"></span>
-            </label>
-
-            <div class="conn-status">
-                <span id="conn-dot" class="dot dot-connecting"></span>
-                <span id="conn-text">กำลังเชื่อมต่อ...</span>
-            </div>
-        </header>
-
-        <main class="content">
-
-            <!-- Location panel -->
-            <section id="panel-location" class="panel panel-active">
-                <aside class="sidebar">
-                    <h2>สมาชิกในทริป <span id="member-count" class="count-pill">0</span></h2>
-                    <div id="member-list" class="member-list"></div>
-                </aside>
-
-                <div class="map-wrap">
-                    <div id="map"></div>
-                    <button id="locate-btn" class="locate-btn" title="ไปยังตำแหน่งของฉัน">🎯</button>
-                </div>
-            </section>
-
-            <!-- Placeholder panels for demo roadmap -->
-            <section id="panel-itinerary" class="panel">
-                <div class="empty-state">
-                    <div class="empty-icon">🗓️</div>
-                    <h3>จัดการกำหนดการเดินทาง</h3>
-                    <p>วางแผนสถานที่ท่องเที่ยว เส้นทาง และตารางเวลาแต่ละวัน — เร็ว ๆ นี้</p>
-                </div>
-            </section>
-
-            <section id="panel-expenses" class="panel">
-                <div class="empty-state">
-                    <div class="empty-icon">💸</div>
-                    <h3>บันทึกค่าใช้จ่าย</h3>
-                    <p>บันทึกรายจ่ายและคำนวณหารค่าใช้จ่ายระหว่างสมาชิกอัตโนมัติ — เร็ว ๆ นี้</p>
-                </div>
-            </section>
-
-            <section id="panel-members" class="panel panel-scroll">
-                <div class="members-panel-inner">
-                    <div class="trip-info-card">
-                        <h3>ข้อมูลทริป</h3>
-                        <div class="trip-info-row">
-                            <span>รหัสเชิญเพื่อน</span>
-                            <strong id="trip-code-display">—</strong>
-                        </div>
-                        <div class="trip-info-row">
-                            <span>สถานะ</span>
-                            <strong id="trip-status-display">—</strong>
-                        </div>
-                        <button id="toggle-trip-active-btn" class="btn-secondary btn-block">ปิดทริปนี้</button>
-                        <p class="trip-info-hint">ทริปที่ปิดแล้วจะไม่รับตำแหน่ง GPS จากสมาชิกอีก เหมาะสำหรับทริปเก่าที่จบไปแล้ว</p>
-                    </div>
-
-                    <div class="trip-info-card">
-                        <h3>บัญชีของฉัน</h3>
-                        <div class="trip-info-row">
-                            <span>เข้าสู่ระบบในชื่อ</span>
-                            <strong id="account-username-display">—</strong>
-                        </div>
-                        <button id="logout-btn-2" class="btn-secondary btn-block">ออกจากระบบ</button>
-                    </div>
-
-                    <div class="trip-info-card">
-                        <h3>สมาชิกในทริปนี้ &amp; สถานะแชร์ตำแหน่ง</h3>
-                        <div id="members-panel-list" class="member-list"></div>
-                    </div>
-                </div>
-            </section>
-
-        </main>
-    </div>
-
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="app.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

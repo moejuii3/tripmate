@@ -173,6 +173,137 @@ app.patch(
     })
 );
 
+// helper: เช็คว่าเป็นสมาชิกทริปนี้ก่อนทุก endpoint ของ itinerary/expenses
+async function requireTripMember(req, res, tripId) {
+    const trip = await store.getTrip(tripId);
+    if (!trip) {
+        res.status(404).json({ error: "ไม่พบทริป" });
+        return null;
+    }
+    if (!(await store.isMember(tripId, req.userId))) {
+        res.status(403).json({ error: "ไม่ใช่สมาชิกทริปนี้" });
+        return null;
+    }
+    return trip;
+}
+
+// ---------------------------------------------------------------------
+// Itinerary — กำหนดการเดินทางของทริป (Phase 1)
+// ---------------------------------------------------------------------
+app.get(
+    "/api/trips/:tripId/itinerary",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+        res.json({ items: await store.getItinerary(tripId) });
+    })
+);
+
+app.post(
+    "/api/trips/:tripId/itinerary",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+
+        const { title, description, location_name, category, start_time, end_time } = req.body || {};
+        if (!title || !String(title).trim()) return res.status(400).json({ error: "กรุณาใส่ชื่อกิจกรรม" });
+
+        const memberId = `${tripId}:${req.userId}`;
+        const item = await store.addItineraryItem(
+            tripId,
+            {
+                title: String(title).trim().slice(0, 120),
+                description: description ? String(description).trim().slice(0, 500) : null,
+                location_name: location_name ? String(location_name).trim().slice(0, 120) : null,
+                category,
+                start_time,
+                end_time,
+            },
+            memberId,
+            req.username
+        );
+        io.to(`trip:${tripId}`).emit("itinerary-updated", { tripId });
+        res.json({ item });
+    })
+);
+
+app.delete(
+    "/api/trips/:tripId/itinerary/:itemId",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+        await store.deleteItineraryItem(tripId, req.params.itemId);
+        io.to(`trip:${tripId}`).emit("itinerary-updated", { tripId });
+        res.json({ ok: true });
+    })
+);
+
+// ---------------------------------------------------------------------
+// Expenses — ค่าใช้จ่ายร่วมกันของทริป (Phase 1) หารเท่ากันทุกคนในทริปตอนสรุปยอด
+// ---------------------------------------------------------------------
+app.get(
+    "/api/trips/:tripId/expenses",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+        res.json(await store.getExpensesSummary(tripId));
+    })
+);
+
+app.post(
+    "/api/trips/:tripId/expenses",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+
+        const { description, amount, category } = req.body || {};
+        const amountNum = Number(amount);
+        if (!description || !String(description).trim())
+            return res.status(400).json({ error: "กรุณาใส่รายละเอียดค่าใช้จ่าย" });
+        if (!Number.isFinite(amountNum) || amountNum <= 0)
+            return res.status(400).json({ error: "จำนวนเงินไม่ถูกต้อง" });
+
+        await store.addExpense(
+            tripId,
+            { description: String(description).trim().slice(0, 120), amount: amountNum, category },
+            req.userId
+        );
+        const summary = await store.getExpensesSummary(tripId);
+        io.to(`trip:${tripId}`).emit("expenses-updated", { tripId });
+        res.json(summary);
+    })
+);
+
+app.patch(
+    "/api/trips/:tripId/budget",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+
+        const { budget } = req.body || {};
+        const budgetNum = budget === null || budget === "" ? null : Number(budget);
+        if (budgetNum != null && (!Number.isFinite(budgetNum) || budgetNum < 0))
+            return res.status(400).json({ error: "งบประมาณไม่ถูกต้อง" });
+
+        await store.setTripBudget(tripId, budgetNum);
+        const summary = await store.getExpensesSummary(tripId);
+        io.to(`trip:${tripId}`).emit("expenses-updated", { tripId });
+        res.json(summary);
+    })
+);
+
+app.delete(
+    "/api/trips/:tripId/expenses/:expenseId",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+        await store.deleteExpense(tripId, req.params.expenseId);
+        const summary = await store.getExpensesSummary(tripId);
+        io.to(`trip:${tripId}`).emit("expenses-updated", { tripId });
+        res.json(summary);
+    })
+);
+
 // Error handler กลาง — กันเซิร์ฟเวอร์ล่ม และตอบข้อความที่เข้าใจง่ายกลับไปแทน stack trace
 app.use((err, req, res, next) => {
     console.error("[api] Error:", err.message);

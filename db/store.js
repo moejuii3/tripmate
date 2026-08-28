@@ -37,6 +37,7 @@ function shapeTrip(row) {
         is_active: row.ended_at == null,
         created_at: toEpoch(row.created_at),
         closed_at: toEpoch(row.ended_at),
+        budget: row.budget != null ? Number(row.budget) : null,
     };
 }
 
@@ -215,6 +216,140 @@ async function updateLocation(tripId, userId, lat, lng) {
     );
 }
 
+async function setTripBudget(tripId, budget) {
+    assertEnabled();
+    await query("UPDATE trips SET budget = $2 WHERE id = $1", [tripId, budget]);
+}
+
+// ---------------------------------------------------------------------
+// Itinerary (กำหนดการเดินทาง) — เรียงตามวัน/เวลา ไม่มีเวลาจะอยู่ท้ายสุดของรายการ
+// ---------------------------------------------------------------------
+function shapeItineraryItem(row) {
+    return {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        location_name: row.location_name,
+        category: row.category,
+        start_time: toEpoch(row.start_time),
+        end_time: toEpoch(row.end_time),
+        created_by_name: row.created_by_name,
+    };
+}
+
+async function addItineraryItem(tripId, item, memberId, memberName) {
+    assertEnabled();
+    const { rows } = await query(
+        `INSERT INTO itinerary_items
+            (trip_id, title, description, location_name, category, start_time, end_time, created_by, created_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [
+            tripId,
+            item.title,
+            item.description || null,
+            item.location_name || null,
+            item.category || "other",
+            item.start_time ? new Date(item.start_time) : null,
+            item.end_time ? new Date(item.end_time) : null,
+            memberId,
+            memberName,
+        ]
+    );
+    return shapeItineraryItem(rows[0]);
+}
+
+async function getItinerary(tripId) {
+    assertEnabled();
+    const { rows } = await query(
+        `SELECT * FROM itinerary_items WHERE trip_id = $1
+         ORDER BY start_time ASC NULLS LAST, created_at ASC`,
+        [tripId]
+    );
+    return rows.map(shapeItineraryItem);
+}
+
+async function deleteItineraryItem(tripId, itemId) {
+    assertEnabled();
+    await query("DELETE FROM itinerary_items WHERE trip_id = $1 AND id = $2", [tripId, itemId]);
+}
+
+// ---------------------------------------------------------------------
+// Expenses (ค่าใช้จ่ายร่วมกัน) — หารเท่ากันทุกคนในทริป ณ ตอนสรุปยอด
+// ---------------------------------------------------------------------
+function shapeExpense(row) {
+    return {
+        id: row.id,
+        description: row.description,
+        amount: Number(row.amount),
+        category: row.category,
+        paid_by: row.paid_by,
+        paid_by_name: row.paid_by_name,
+        created_at: toEpoch(row.created_at),
+    };
+}
+
+async function addExpense(tripId, { description, amount, category }, userId) {
+    assertEnabled();
+    const { rows } = await query(
+        `INSERT INTO expenses (trip_id, description, amount, category, paid_by)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [tripId, description, amount, category || "other", userId]
+    );
+    return getExpenseWithName(tripId, rows[0].id);
+}
+
+async function getExpenseWithName(tripId, expenseId) {
+    const { rows } = await query(
+        `SELECT e.*, m.name AS paid_by_name
+         FROM expenses e
+         JOIN members m ON m.trip_id = e.trip_id AND m.user_id = e.paid_by
+         WHERE e.trip_id = $1 AND e.id = $2`,
+        [tripId, expenseId]
+    );
+    return shapeExpense(rows[0]);
+}
+
+async function deleteExpense(tripId, expenseId) {
+    assertEnabled();
+    await query("DELETE FROM expenses WHERE trip_id = $1 AND id = $2", [tripId, expenseId]);
+}
+
+// คืนทั้งรายการค่าใช้จ่าย + สรุปยอด (รวม, งบ, ใครติดเงินใคร) หารเท่ากันทุกคนในทริปตอนนี้
+async function getExpensesSummary(tripId) {
+    assertEnabled();
+
+    const tripRes = await query("SELECT budget FROM trips WHERE id = $1", [tripId]);
+    const budget = tripRes.rows[0]?.budget != null ? Number(tripRes.rows[0].budget) : null;
+
+    const { rows: expenseRows } = await query(
+        `SELECT e.*, m.name AS paid_by_name
+         FROM expenses e
+         JOIN members m ON m.trip_id = e.trip_id AND m.user_id = e.paid_by
+         WHERE e.trip_id = $1
+         ORDER BY e.created_at DESC`,
+        [tripId]
+    );
+    const expenses = expenseRows.map(shapeExpense);
+    const total = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+    const members = await getTripMembers(tripId); // [{id, name, color, ...}]
+    const share = members.length > 0 ? total / members.length : 0;
+
+    const paidByMember = {};
+    for (const e of expenses) paidByMember[e.paid_by] = (paidByMember[e.paid_by] || 0) + e.amount;
+
+    const balances = members.map((m) => ({
+        user_id: m.id,
+        name: m.name,
+        color: m.color,
+        paid: paidByMember[m.id] || 0,
+        net: (paidByMember[m.id] || 0) - share, // บวก = ได้คืน, ลบ = ติดเงินเพื่อน
+    }));
+
+    return { expenses, total, budget, share, balances };
+}
+
 module.exports = {
     createUser,
     findUserByUsername,
@@ -228,4 +363,11 @@ module.exports = {
     setTripActive,
     setMemberShare,
     updateLocation,
+    setTripBudget,
+    addItineraryItem,
+    getItinerary,
+    deleteItineraryItem,
+    addExpense,
+    deleteExpense,
+    getExpensesSummary,
 };

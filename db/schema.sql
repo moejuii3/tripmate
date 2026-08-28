@@ -58,7 +58,13 @@ CREATE INDEX IF NOT EXISTS idx_members_user ON members (user_id);
 -- เพื่อประหยัดพื้นที่ฐานข้อมูล — พิกัดเก่าจะถูกเขียนทับด้วยพิกัดใหม่ทุกครั้ง ไม่สะสม
 
 -- ---------------------------------------------------------------
+-- trips.budget: งบประมาณของทริป (ไม่บังคับ) ใช้คำนวณ progress bar ในหน้าค่าใช้จ่าย
+-- ---------------------------------------------------------------
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS budget NUMERIC(12,2);
+
+-- ---------------------------------------------------------------
 -- itinerary_items: กำหนดการเดินทางของแต่ละทริป
+-- category = ไอคอนหมวดกิจกรรม (sight / food / transport / hotel / activity / other)
 -- ---------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS itinerary_items (
     id              BIGSERIAL PRIMARY KEY,
@@ -74,7 +80,25 @@ CREATE TABLE IF NOT EXISTS itinerary_items (
     created_by_name TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE itinerary_items ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'other';
 
 CREATE INDEX IF NOT EXISTS idx_itinerary_trip ON itinerary_items (trip_id);
 CREATE INDEX IF NOT EXISTS idx_itinerary_start_time
     ON itinerary_items (start_time ASC NULLS LAST, created_at ASC);
+
+-- ---------------------------------------------------------------
+-- expenses: ค่าใช้จ่ายของทริป — หารเท่ากันระหว่าง "สมาชิกทั้งหมดในทริป ณ ตอนนี้" เสมอ
+-- (โมเดลง่ายที่สุด: ไม่เก็บ per-split ล่วงหน้า คำนวณสดจากจำนวนสมาชิกปัจจุบันตอนสรุปยอด)
+-- category = หมวดหมู่ (food / transport / activity / stay / drinks / shopping / other)
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS expenses (
+    id            BIGSERIAL PRIMARY KEY,
+    trip_id       TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    description   TEXT NOT NULL,
+    amount        NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    category      TEXT NOT NULL DEFAULT 'other',
+    paid_by       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_trip ON expenses (trip_id);
