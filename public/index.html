@@ -147,53 +147,114 @@ tailwind.config = {
 </div>
 
 <!-- ============================================================
-     MY TRIPS SCREEN — หน้ารวมทริปของฉัน (หลังล็อกอิน)
+     MY TRIPS SCREEN — หน้ารวมทริปของฉัน + Explore + Profile (หลังล็อกอิน)
 ============================================================ -->
 <div id="trips-screen" class="fixed inset-0 z-[90] flex flex-col bg-surface" hidden>
   <header class="fixed top-0 inset-x-0 z-50 bg-surface/80 backdrop-blur-xl pt-safe shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
     <div class="h-16 px-margin-mobile flex items-center justify-between">
       <div class="flex items-center gap-3">
         <span class="material-symbols-outlined text-primary text-[28px]">travel_explore</span>
-        <span class="font-headline-md text-headline-md text-on-surface">My Trips</span>
+        <span class="font-headline-md text-headline-md text-on-surface" id="main-screen-title">My Trips</span>
       </div>
-      <button id="logout-btn" class="w-10 h-10 rounded-full bg-surface-container-low flex items-center justify-center text-on-surface-variant" title="ออกจากระบบ">
-        <span class="material-symbols-outlined text-[20px]">logout</span>
-      </button>
+      <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-on-primary font-bold text-sm" id="header-avatar">—</div>
     </div>
   </header>
 
-  <main class="flex-grow relative w-full pt-16 pb-24 bg-surface px-margin-mobile overflow-y-auto">
-    <div class="flex flex-col w-full relative">
-      <p class="font-body-md text-on-surface-variant mt-4">สวัสดี, <strong id="trips-username" class="text-on-surface font-bold">—</strong></p>
+  <main class="flex-grow relative w-full pt-16 pb-24 bg-surface overflow-hidden">
 
-      <div id="active-trip-section" class="mt-6" hidden>
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="font-headline-md text-on-surface">ทริปที่กำลังไป</h2>
-          <span class="bg-primary text-on-primary px-3 py-1 rounded-full font-label-md text-xs uppercase tracking-widest shadow-sm">Live</span>
+    <!-- ---- Global Tab: My Trips ---- -->
+    <section id="main-tab-trips" class="main-tab absolute inset-0 pt-16 pb-24 px-margin-mobile overflow-y-auto">
+      <div class="flex flex-col w-full relative">
+        <p class="font-body-md text-on-surface-variant mt-4">สวัสดี, <strong id="trips-username" class="text-on-surface font-bold">—</strong></p>
+
+        <div id="active-trip-section" class="mt-6" hidden>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-headline-md text-on-surface">ทริปที่กำลังไป</h2>
+            <span class="bg-primary text-on-primary px-3 py-1 rounded-full font-label-md text-xs uppercase tracking-widest shadow-sm animate-pulse">Live</span>
+          </div>
+          <div id="active-trip-card"></div>
         </div>
-        <div id="active-trip-card"></div>
+
+        <div id="other-trips-section" class="mt-10">
+          <h2 class="font-headline-md text-on-surface mb-4">ทริปอื่น ๆ</h2>
+          <div id="other-trips-list" class="flex flex-col gap-4"></div>
+        </div>
+
+        <div id="closed-trips-section" class="mt-8" hidden>
+          <h2 class="font-headline-md text-on-surface mb-4">ทริปที่ผ่านมา</h2>
+          <div id="closed-trips-list" class="flex flex-col gap-3"></div>
+        </div>
+
+        <div id="trips-empty-state" class="flex flex-col items-center justify-center text-center py-20" hidden>
+          <div class="w-16 h-16 rounded-2xl bg-primary-container/20 flex items-center justify-center mb-4">
+            <span class="material-symbols-outlined text-primary text-[32px]">luggage</span>
+          </div>
+          <h3 class="font-headline-md text-on-surface mb-2">ยังไม่มีทริป</h3>
+          <p class="font-body-md text-on-surface-variant max-w-xs">กดปุ่ม + ด้านล่างเพื่อสร้างทริปแรกของคุณ หรือไปที่แท็บ Explore เพื่อเข้าร่วมทริปของคนอื่น</p>
+        </div>
+
+        <div class="h-24"></div>
       </div>
+    </section>
 
-      <div id="other-trips-section" class="mt-10">
-        <h2 class="font-headline-md text-on-surface mb-4">ทริปอื่น ๆ</h2>
-        <div id="other-trips-list" class="flex flex-col gap-4"></div>
+    <!-- ---- Global Tab: Explore (Community Trips) ---- -->
+    <section id="main-tab-explore" class="main-tab absolute inset-0 pt-16 pb-24 px-margin-mobile overflow-y-auto" hidden>
+      <div class="flex flex-col w-full pt-4">
+        <h1 class="font-display-lg-mobile text-[26px] text-on-surface mb-1">Community Journeys</h1>
+        <p class="font-body-md text-on-surface-variant mb-6">ค้นหาและเข้าร่วมทริปสาธารณะจากนักเดินทางคนอื่น</p>
+
+        <div id="community-list" class="flex flex-col gap-5"></div>
+
+        <div id="community-empty-state" class="flex flex-col items-center justify-center text-center py-20" hidden>
+          <div class="w-16 h-16 rounded-2xl bg-secondary-container/40 flex items-center justify-center mb-4">
+            <span class="material-symbols-outlined text-secondary text-[32px]">explore</span>
+          </div>
+          <h3 class="font-headline-md text-on-surface mb-2">ยังไม่มีทริปสาธารณะ</h3>
+          <p class="font-body-md text-on-surface-variant max-w-xs">เปิดทริปของคุณให้เป็นสาธารณะได้ที่แท็บ Members ในหน้าทริป เพื่อให้คนอื่นค้นหาเจอ</p>
+        </div>
+
+        <div class="h-8"></div>
       </div>
+    </section>
 
-      <div id="closed-trips-section" class="mt-8" hidden>
-        <h2 class="font-headline-md text-on-surface mb-4">ทริปที่ผ่านมา</h2>
-        <div id="closed-trips-list" class="flex flex-col gap-3"></div>
+    <!-- ---- Global Tab: Profile ---- -->
+    <section id="main-tab-profile" class="main-tab absolute inset-0 pt-16 pb-24 px-margin-mobile overflow-y-auto" hidden>
+      <div class="flex flex-col items-center pt-8 pb-6">
+        <div class="w-24 h-24 rounded-full bg-primary flex items-center justify-center text-on-primary font-extrabold text-3xl shadow-[0_12px_32px_rgba(0,64,224,0.25)] mb-4" id="profile-avatar">—</div>
+        <h2 class="font-headline-md text-[22px] text-on-surface" id="profile-username">—</h2>
+        <p class="font-body-md text-on-surface-variant mt-1">นักเดินทาง Travel Buddy</p>
       </div>
-
-      <p id="trips-empty-msg" class="font-body-md text-on-surface-variant text-center py-16" hidden>ยังไม่มีทริป — กดปุ่ม + ด้านล่างเพื่อสร้างทริปแรกของคุณ</p>
-
-      <div class="h-8"></div>
-    </div>
+      <div class="bg-surface-container-low rounded-[20px] p-2 flex flex-col gap-1 mt-4">
+        <button id="profile-logout-btn" class="w-full flex items-center gap-3 p-4 rounded-2xl hover:bg-surface-container-high transition-colors text-left">
+          <span class="material-symbols-outlined text-error">logout</span>
+          <span class="font-label-md text-on-surface text-sm">ออกจากระบบ</span>
+        </button>
+      </div>
+    </section>
   </main>
 
-  <!-- Prominent FAB (Lime Glow) -->
-  <button id="fab-add-trip" class="fixed bottom-8 right-margin-mobile z-40 w-[64px] h-[64px] bg-secondary-fixed text-on-secondary-fixed rounded-full flex items-center justify-center shadow-[0_12px_40px_rgba(205,242,0,0.35)] transition-transform active:scale-95 hover:scale-105">
+  <!-- Prominent FAB (Lime Glow) — เฉพาะแท็บ My Trips -->
+  <button id="fab-add-trip" class="fixed bottom-28 right-margin-mobile z-40 w-[64px] h-[64px] bg-secondary-fixed text-on-secondary-fixed rounded-full flex items-center justify-center shadow-[0_12px_40px_rgba(205,242,0,0.35)] transition-transform active:scale-95 hover:scale-105">
     <span class="material-symbols-outlined text-[32px]">add</span>
   </button>
+
+  <!-- Global bottom nav -->
+  <nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-1px_8px_rgba(0,0,0,0.04)]">
+    <div class="flex justify-around items-center h-20 px-2">
+      <button class="main-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-on-surface-variant transition-all" data-tab="explore">
+        <span class="material-symbols-outlined">explore</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Explore</span>
+      </button>
+      <button class="main-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-primary font-bold transition-all" data-tab="trips">
+        <span class="material-symbols-outlined">luggage</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Trips</span>
+      </button>
+      <button class="main-tab-btn flex flex-col items-center justify-center gap-1 w-16 h-16 text-on-surface-variant transition-all" data-tab="profile">
+        <span class="material-symbols-outlined">person</span>
+        <span class="font-label-md text-[10px] uppercase tracking-wider">Profile</span>
+      </button>
+    </div>
+  </nav>
 </div>
 
 <!-- ===== Create/Join Trip Bottom Sheet ===== -->
@@ -323,6 +384,25 @@ tailwind.config = {
           </div>
           <button id="toggle-trip-active-btn" class="w-full py-3 rounded-full bg-surface-container-high text-on-surface font-label-md text-sm mt-1 active:scale-[0.98] transition-transform">ปิดทริปนี้</button>
           <p class="font-body-md text-[12px] text-on-surface-variant leading-relaxed">ทริปที่ปิดแล้วจะไม่รับตำแหน่ง GPS จากสมาชิกอีก เหมาะสำหรับทริปเก่าที่จบไปแล้ว</p>
+        </div>
+
+        <div class="bg-surface-container-low rounded-[20px] p-5 flex flex-col gap-3">
+          <div class="flex justify-between items-center">
+            <div class="min-w-0 pr-2">
+              <h3 class="font-headline-md text-[17px] text-on-surface">แชร์ในหน้า Explore</h3>
+              <p class="font-body-md text-[12px] text-on-surface-variant mt-0.5">ให้คนอื่นค้นหาและเข้าร่วมทริปนี้ได้จากหน้า Explore</p>
+            </div>
+            <button id="visibility-toggle-btn" class="flex-shrink-0 relative w-14 h-8 rounded-full bg-surface-container-high transition-colors duration-300">
+              <span id="visibility-toggle-knob" class="absolute top-1 left-1 w-6 h-6 rounded-full bg-surface shadow-md transition-transform duration-300"></span>
+            </button>
+          </div>
+          <div id="visibility-fields" class="flex flex-col gap-2" hidden>
+            <input id="trip-destination-input" type="text" maxlength="60" placeholder="จุดหมาย เช่น เชียงใหม่, ประเทศไทย"
+              class="w-full px-4 py-3 rounded-xl bg-surface-container-lowest outline-none focus:ring-2 focus:ring-primary font-body-md text-sm" />
+            <textarea id="trip-description-input" maxlength="300" rows="2" placeholder="คำอธิบายสั้นๆ เกี่ยวกับทริปนี้ (ไม่บังคับ)"
+              class="w-full px-4 py-3 rounded-xl bg-surface-container-lowest outline-none focus:ring-2 focus:ring-primary font-body-md text-sm resize-none"></textarea>
+            <button id="save-trip-details-btn" class="w-full py-2.5 rounded-full bg-primary text-on-primary font-label-md text-[13px] active:scale-[0.98] transition-transform">บันทึก</button>
+          </div>
         </div>
 
         <div class="bg-surface-container-low rounded-[20px] p-5 flex flex-col gap-1">

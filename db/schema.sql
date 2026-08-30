@@ -102,3 +102,14 @@ CREATE TABLE IF NOT EXISTS expenses (
 );
 
 CREATE INDEX IF NOT EXISTS idx_expenses_trip ON expenses (trip_id);
+
+-- ---------------------------------------------------------------
+-- Phase 2: Explore / Community Trips
+-- visibility = 'private' (ค่าเริ่มต้น เห็นเฉพาะสมาชิก) หรือ 'public' (ค้นหาเจอในหน้า Explore)
+-- destination / description = ข้อมูลโชว์ในการ์ด Explore (ไม่บังคับกรอก)
+-- ---------------------------------------------------------------
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'private';
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS destination TEXT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS description TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_trips_visibility ON trips (visibility) WHERE visibility = 'public';

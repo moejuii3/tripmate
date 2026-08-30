@@ -111,7 +111,7 @@ function doLogout() {
     authScreen.hidden = false;
     showAuthTab("login");
 }
-document.getElementById("logout-btn").addEventListener("click", doLogout);
+document.getElementById("profile-logout-btn").addEventListener("click", doLogout);
 
 async function boot() {
     if (!authToken) { authScreen.hidden = false; return; }
@@ -188,10 +188,39 @@ async function openTripsScreen() {
         currentTrip = null;
     }
     tripsScreen.hidden = false;
+
+    const initials = me.username.trim().slice(0, 2).toUpperCase();
     document.getElementById("trips-username").textContent = me.username;
+    document.getElementById("header-avatar").textContent = initials;
+    document.getElementById("profile-avatar").textContent = initials;
+    document.getElementById("profile-username").textContent = me.username;
+
+    switchMainTab("trips");
     await refreshMyTrips();
     renderTripsScreen();
 }
+
+/* ---------------------------------------------------
+   3b) Global tabs: Trips / Explore / Profile
+--------------------------------------------------- */
+const fabAddTrip = document.getElementById("fab-add-trip");
+const TAB_TITLES = { trips: "My Trips", explore: "Explore", profile: "Profile" };
+
+function switchMainTab(tab) {
+    document.querySelectorAll(".main-tab").forEach((el) => (el.hidden = el.id !== `main-tab-${tab}`));
+    document.querySelectorAll(".main-tab-btn").forEach((btn) => {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle("text-primary", active);
+        btn.classList.toggle("font-bold", active);
+        btn.classList.toggle("text-on-surface-variant", !active);
+    });
+    document.getElementById("main-screen-title").textContent = TAB_TITLES[tab] || "Travel Buddy";
+    fabAddTrip.style.display = tab === "trips" ? "flex" : "none";
+    if (tab === "explore") loadCommunityTrips();
+}
+document.querySelectorAll(".main-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => switchMainTab(btn.dataset.tab));
+});
 
 const TRIP_COVERS = [
     "https://images.unsplash.com/photo-1500534623283-312aade485b7?w=800&q=60",
@@ -212,14 +241,14 @@ function renderTripsScreen() {
     const otherList = document.getElementById("other-trips-list");
     const closedSection = document.getElementById("closed-trips-section");
     const closedList = document.getElementById("closed-trips-list");
-    const emptyMsg = document.getElementById("trips-empty-msg");
+    const emptyState = document.getElementById("trips-empty-state");
 
     const openTrips = myTrips.filter((t) => t.is_active);
     const closedTrips = myTrips.filter((t) => !t.is_active);
     const featured = openTrips[0] || null;
     const rest = openTrips.slice(1);
 
-    emptyMsg.hidden = myTrips.length !== 0;
+    emptyState.hidden = myTrips.length !== 0;
 
     if (featured) {
         activeSection.hidden = false;
@@ -398,6 +427,7 @@ async function enterTrip(trip) {
     document.getElementById("trip-screen-name").textContent = trip.name;
     document.getElementById("member-trip-code").textContent = trip.code;
     updateTripStatusUI();
+    updateVisibilityUI();
 
     if (!map) initMap();
     Object.values(markers).forEach((m) => map.removeLayer(m.marker));
@@ -841,6 +871,125 @@ document.getElementById("budget-form").addEventListener("submit", async (e) => {
         await api(`/api/trips/${currentTrip.id}/budget`, { method: "PATCH", body: JSON.stringify({ budget }) });
         budgetSheet.hidden = true;
         loadExpenses();
+    } catch (err) {
+        alert(err.message);
+    }
+});
+
+/* ---------------------------------------------------
+   12) Explore — Community Trips (Phase 2)
+--------------------------------------------------- */
+async function loadCommunityTrips() {
+    const listEl = document.getElementById("community-list");
+    const emptyState = document.getElementById("community-empty-state");
+    try {
+        const { trips } = await api("/api/community/trips");
+        emptyState.hidden = trips.length !== 0;
+        listEl.innerHTML = trips
+            .map((t, idx) => {
+                const isHero = idx === 0;
+                const cover = coverFor(t.id);
+                if (isHero) {
+                    return `
+                    <article class="relative w-full rounded-[24px] overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.08)] bg-surface-container-lowest cursor-pointer" data-trip-id="${t.id}">
+                        <div class="relative h-72 w-full">
+                            <div class="w-full h-full bg-cover bg-center" style="background-image:url('${cover}')"></div>
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent"></div>
+                            <div class="absolute top-4 left-4 bg-secondary-fixed text-on-secondary-fixed px-3 py-1 rounded-full font-label-md text-xs flex items-center gap-1 shadow-lg">
+                                <span class="material-symbols-outlined text-[16px]">local_fire_department</span> ยอดนิยม
+                            </div>
+                            <div class="absolute bottom-0 left-0 w-full p-6 text-white">
+                                <h2 class="font-headline-lg text-white mb-1 truncate">${escapeHtml(t.name)}</h2>
+                                <p class="font-body-md text-white/80 mb-4 truncate">${t.destination ? escapeHtml(t.destination) + " · " : ""}${t.member_count} สมาชิก</p>
+                                <button class="join-community-btn bg-primary text-on-primary px-5 py-2.5 rounded-full font-label-md flex items-center gap-2 active:scale-95 transition-transform" data-trip-id="${t.id}">
+                                    <span class="material-symbols-outlined text-[18px]">add</span> เข้าร่วมทริป
+                                </button>
+                            </div>
+                        </div>
+                    </article>`;
+                }
+                return `
+                <article class="relative w-full rounded-[24px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.05)] bg-surface-container-lowest flex gap-4 p-3 cursor-pointer" data-trip-id="${t.id}">
+                    <div class="w-24 h-24 rounded-xl bg-cover bg-center flex-shrink-0" style="background-image:url('${cover}')"></div>
+                    <div class="flex-1 min-w-0 flex flex-col justify-center gap-1">
+                        <h4 class="font-headline-md text-[16px] text-on-surface truncate">${escapeHtml(t.name)}</h4>
+                        <p class="font-body-md text-[13px] text-on-surface-variant truncate">${t.destination ? escapeHtml(t.destination) + " · " : ""}${t.member_count} สมาชิก</p>
+                        ${t.description ? `<p class="font-body-md text-[12px] text-on-surface-variant line-clamp-1">${escapeHtml(t.description)}</p>` : ""}
+                    </div>
+                    <button class="join-community-btn self-center bg-surface-container-high text-on-surface px-4 py-2 rounded-full font-label-md text-[13px] flex-shrink-0 active:scale-95 transition-transform" data-trip-id="${t.id}">เข้าร่วม</button>
+                </article>`;
+            })
+            .join("");
+
+        listEl.querySelectorAll(".join-community-btn").forEach((btn) => {
+            btn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                const tripId = btn.dataset.tripId;
+                try {
+                    const { trip } = await api("/api/trips/join", { method: "POST", body: JSON.stringify({ code: tripId }) });
+                    await refreshMyTrips();
+                    switchMainTab("trips");
+                    renderTripsScreen();
+                    const full = myTrips.find((t) => t.id === trip.id);
+                    if (full) enterTrip(full);
+                } catch (err) {
+                    alert(err.message);
+                }
+            });
+        });
+    } catch (err) {
+        console.warn("loadCommunityTrips failed:", err.message);
+    }
+}
+
+/* ---------------------------------------------------
+   13) Trip visibility toggle (แชร์ในหน้า Explore) — Phase 2
+--------------------------------------------------- */
+const visibilityToggleBtn = document.getElementById("visibility-toggle-btn");
+const visibilityToggleKnob = document.getElementById("visibility-toggle-knob");
+const visibilityFields = document.getElementById("visibility-fields");
+
+function updateVisibilityUI() {
+    const isPublic = currentTrip.visibility === "public";
+    visibilityToggleBtn.classList.toggle("bg-primary", isPublic);
+    visibilityToggleBtn.classList.toggle("bg-surface-container-high", !isPublic);
+    visibilityToggleKnob.style.transform = isPublic ? "translateX(24px)" : "translateX(0)";
+    visibilityFields.hidden = !isPublic;
+    document.getElementById("trip-destination-input").value = currentTrip.destination || "";
+    document.getElementById("trip-description-input").value = currentTrip.description || "";
+}
+
+visibilityToggleBtn.addEventListener("click", async () => {
+    if (!currentTrip) return;
+    const nextVisibility = currentTrip.visibility === "public" ? "private" : "public";
+    try {
+        const { trip } = await api(`/api/trips/${currentTrip.id}/visibility`, {
+            method: "PATCH",
+            body: JSON.stringify({ visibility: nextVisibility }),
+        });
+        currentTrip.visibility = trip.visibility;
+        updateVisibilityUI();
+    } catch (err) {
+        alert(err.message);
+    }
+});
+
+document.getElementById("save-trip-details-btn").addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (!currentTrip) return;
+    const destination = document.getElementById("trip-destination-input").value.trim();
+    const description = document.getElementById("trip-description-input").value.trim();
+    try {
+        const { trip } = await api(`/api/trips/${currentTrip.id}/details`, {
+            method: "PATCH",
+            body: JSON.stringify({ destination, description }),
+        });
+        currentTrip.destination = trip.destination;
+        currentTrip.description = trip.description;
+        const btn = document.getElementById("save-trip-details-btn");
+        const original = btn.textContent;
+        btn.textContent = "บันทึกแล้ว ✓";
+        setTimeout(() => (btn.textContent = original), 1500);
     } catch (err) {
         alert(err.message);
     }

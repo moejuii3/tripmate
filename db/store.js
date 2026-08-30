@@ -38,6 +38,9 @@ function shapeTrip(row) {
         created_at: toEpoch(row.created_at),
         closed_at: toEpoch(row.ended_at),
         budget: row.budget != null ? Number(row.budget) : null,
+        visibility: row.visibility || "private",
+        destination: row.destination || null,
+        description: row.description || null,
     };
 }
 
@@ -111,6 +114,38 @@ async function getTrip(tripId) {
     assertEnabled();
     const { rows } = await query("SELECT * FROM trips WHERE id = $1", [tripId]);
     return shapeTrip(rows[0]);
+}
+
+async function setTripVisibility(tripId, visibility) {
+    assertEnabled();
+    const v = visibility === "public" ? "public" : "private";
+    await query("UPDATE trips SET visibility = $2 WHERE id = $1", [tripId, v]);
+    return getTrip(tripId);
+}
+
+async function setTripDetails(tripId, { destination, description }) {
+    assertEnabled();
+    await query("UPDATE trips SET destination = $2, description = $3 WHERE id = $1", [
+        tripId,
+        destination || null,
+        description || null,
+    ]);
+    return getTrip(tripId);
+}
+
+// ทริปสาธารณะทั้งหมด (สำหรับหน้า Explore) — เรียงตามจำนวนสมาชิกมาก่อน แล้วตามใหม่สุด
+async function getCommunityTrips(excludeUserId) {
+    assertEnabled();
+    const { rows } = await query(
+        `SELECT t.*, (SELECT COUNT(*) FROM members WHERE trip_id = t.id) AS member_count
+         FROM trips t
+         WHERE t.visibility = 'public' AND t.ended_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM members m WHERE m.trip_id = t.id AND m.user_id = $1)
+         ORDER BY member_count DESC, t.created_at DESC
+         LIMIT 50`,
+        [excludeUserId]
+    );
+    return rows.map((r) => ({ ...shapeTrip(r), member_count: Number(r.member_count) }));
 }
 
 async function isMember(tripId, userId) {
@@ -356,6 +391,9 @@ module.exports = {
     findUserById,
     createTrip,
     getTrip,
+    setTripVisibility,
+    setTripDetails,
+    getCommunityTrips,
     isMember,
     addMember,
     getUserTrips,

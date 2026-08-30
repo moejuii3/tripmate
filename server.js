@@ -81,6 +81,7 @@ app.get(
 // ---------------------------------------------------------------------
 app.use("/api/trips", requireAuth);
 app.use("/api/whoami", requireAuth);
+app.use("/api/community", requireAuth);
 
 // คืนรายการทริปทั้งหมดที่บัญชีนี้เข้าร่วม (ทั้งเปิดและปิด)
 app.post(
@@ -170,6 +171,45 @@ app.patch(
             members: await store.getTripMembers(tripId),
         });
         res.json({ ok: true });
+    })
+);
+
+// ---------------------------------------------------------------------
+// Phase 2: Explore / Community Trips — ทริปสาธารณะให้คนอื่นค้นหา/เข้าร่วมได้
+// ---------------------------------------------------------------------
+
+// รายการทริปสาธารณะ (ไม่รวมทริปที่ตัวเองเป็นสมาชิกอยู่แล้ว)
+app.get(
+    "/api/community/trips",
+    ah(async (req, res) => {
+        res.json({ trips: await store.getCommunityTrips(req.userId) });
+    })
+);
+
+// เปิด/ปิดให้ทริปเป็นสาธารณะ (สมาชิกในทริปเท่านั้นที่ทำได้)
+app.patch(
+    "/api/trips/:tripId/visibility",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+        const { visibility } = req.body || {};
+        const trip = await store.setTripVisibility(tripId, visibility);
+        res.json({ trip });
+    })
+);
+
+// แก้ไขจุดหมายปลายทาง/คำอธิบายทริป (โชว์ในการ์ด Explore)
+app.patch(
+    "/api/trips/:tripId/details",
+    ah(async (req, res) => {
+        const tripId = req.params.tripId.toUpperCase();
+        if (!(await requireTripMember(req, res, tripId))) return;
+        const { destination, description } = req.body || {};
+        const trip = await store.setTripDetails(tripId, {
+            destination: destination ? String(destination).trim().slice(0, 60) : null,
+            description: description ? String(description).trim().slice(0, 300) : null,
+        });
+        res.json({ trip });
     })
 );
 
