@@ -3,3 +3,5 @@ tripmate.db
 tripmate.db-shm
 tripmate.db-wal
 *.rar
+public/uploads/covers/*
+!public/uploads/covers/.gitkeep

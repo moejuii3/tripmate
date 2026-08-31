@@ -113,3 +113,94 @@ ALTER TABLE trips ADD COLUMN IF NOT EXISTS destination TEXT;
 ALTER TABLE trips ADD COLUMN IF NOT EXISTS description TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_trips_visibility ON trips (visibility) WHERE visibility = 'public';
+
+-- ---------------------------------------------------------------
+-- Phase 3: Travel Stories — ฟีดเรื่องเล่าทริป (รูป + แคปชั่น + แท็ก)
+-- image_url เป็นลิงก์รูปเท่านั้น (ยังไม่มีระบบอัปโหลดไฟล์)
+-- trip_id ไม่บังคับ ผูกกับทริปได้ถ้าอยากอ้างอิงว่าเป็นเรื่องจากทริปไหน
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stories (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    trip_id     TEXT REFERENCES trips(id) ON DELETE SET NULL,
+    image_url   TEXT NOT NULL,
+    caption     TEXT,
+    tags        TEXT[] NOT NULL DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stories_created ON stories (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS story_likes (
+    story_id    BIGINT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (story_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS story_comments (
+    id          BIGSERIAL PRIMARY KEY,
+    story_id    BIGINT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_story_comments_story ON story_comments (story_id, created_at ASC);
+
+-- ---------------------------------------------------------------
+-- Phase 4: Profile + Find Travelers
+-- discoverable = ผู้ใช้เปิดสวิตช์ยินยอมให้คนอื่นค้นหาเจอในหน้า Find Travelers เอง (ปิดเป็นค่าเริ่มต้น เพื่อความเป็นส่วนตัว)
+-- interests = แท็กความสนใจ ใช้ทั้งแสดงผลและคำนวณ % match แบบง่ายๆ (นับแท็กที่ตรงกัน)
+-- ---------------------------------------------------------------
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS location_text TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS interests TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS discoverable BOOLEAN NOT NULL DEFAULT false;
+
+-- ---------------------------------------------------------------
+-- trip_invites: คำเชิญเข้าทริป — ผู้ถูกเชิญต้องกดตอบรับเองถึงจะเข้าร่วมจริง (ไม่เพิ่มสมาชิกให้เฉยๆ)
+-- UNIQUE(trip_id, to_user_id) กันเชิญซ้ำหลายรอบขณะที่คำเชิญเดิมยังค้างอยู่
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS trip_invites (
+    id            BIGSERIAL PRIMARY KEY,
+    trip_id       TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+    from_user_id  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status        TEXT NOT NULL DEFAULT 'pending', -- pending / accepted / declined
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    responded_at  TIMESTAMPTZ,
+    UNIQUE (trip_id, to_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trip_invites_to_user ON trip_invites (to_user_id, status);
+
+-- ---------------------------------------------------------------
+-- Phase 5: Trip fields (วันที่/หัวหน้าทริป/รูปปกอัปโหลดจริง/จุดนัดหมาย) + Route + Distance + Alerts
+--
+-- host_user_id = "หัวหน้าทริป" (ผู้สร้างทริป) มีสิทธิ์พิเศษ: แก้ชื่อ/วันที่/รูปปก และลบทริปถาวร
+--   ตั้งใจใช้คำว่า "host" ไม่ใช่ "owner" กันชนกับ role เจ้าของเว็บไซต์ในอนาคต
+-- cover_image_path = path ไฟล์รูปปกที่อัปโหลดเก็บบนเครื่อง server เอง (เช่น /uploads/covers/xxx.jpg)
+-- meetup_* = จุดนัดหมายของทริป (ไม่บังคับ) ใช้คำนวณระยะห่างของสมาชิกแต่ละคนจากจุดนัดหมาย
+-- ---------------------------------------------------------------
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS start_date DATE;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS end_date DATE;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS host_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS cover_image_path TEXT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS meetup_name TEXT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS meetup_lat DOUBLE PRECISION;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS meetup_lng DOUBLE PRECISION;
+
+-- ทริปเก่าที่สร้างไว้ก่อนมีคอลัมน์นี้ (host_user_id เป็น NULL) ให้ตั้งสมาชิกที่เข้าร่วมก่อนสุดเป็นหัวหน้าแทน
+-- เพื่อไม่ให้ทริปเก่ากลายเป็น "ไม่มีหัวหน้า" แล้วลบไม่ได้เลย
+UPDATE trips t SET host_user_id = (
+    SELECT user_id FROM members WHERE trip_id = t.id ORDER BY joined_at ASC LIMIT 1
+) WHERE t.host_user_id IS NULL;
+
+-- lat/lng ของ itinerary_items มีอยู่แล้วในตารางเดิม (ดูด้านบน) แต่ API ไม่เคยส่งค่าเข้ามา
+-- Phase 5 แก้ที่ server.js/app.js ให้ส่ง lat/lng จริงตอนเพิ่มกิจกรรม เพื่อพล็อตเส้นทาง (Route) บนแผนที่ได้
+
+-- track "เคลื่อนที่ล่าสุด" แยกจาก "อัปเดตพิกัดล่าสุด" — เพื่อตรวจจับ "ไม่มีการเคลื่อนที่" (Location Alert)
+-- last_location_at จะอัปเดตทุกครั้งที่ส่ง GPS เข้ามา (แม้ตำแหน่งเดิม)
+-- last_moved_at จะอัปเดตเฉพาะตอนตำแหน่งเปลี่ยนไปเกิน ~15 เมตรเท่านั้น
+ALTER TABLE members ADD COLUMN IF NOT EXISTS last_moved_at TIMESTAMPTZ;
